@@ -14,6 +14,16 @@ let lastSuccessfulResponse = 0;
 let pendingToast = null;
 const recentToasts = new Map();
 const pendingCommandResults = new Map();
+const VIRTUALIZATION_THRESHOLD = 400;
+const VIRTUAL_ROW_HEIGHT = 58;
+const VIRTUAL_OVERSCAN = 8;
+
+let directoryEntries = [];
+let filteredDirectoryEntries = [];
+let virtualScrollHandler = null;
+let virtualResizeHandler = null;
+let virtualRenderRaf = null;
+let isVirtualizedList = false;
 
 const statusEl = document.getElementById("status-indicator");
 const breadcrumbEl = document.getElementById("breadcrumb");
@@ -31,6 +41,11 @@ const pathInput = document.getElementById("path-input");
 const pathGoBtn = document.getElementById("path-go-btn");
 const transferPanel = document.getElementById("transfer-panel");
 const transferList = document.getElementById("transfer-list");
+const fileListPanel = document.getElementById("file-list-panel");
+const sortFieldEl = document.getElementById("sort-field");
+const sortOrderBtn = document.getElementById("sort-order-btn");
+const filterTypeEl = document.getElementById("filter-type");
+const fileCountSummaryEl = document.getElementById("file-count-summary");
 
 const searchBar = document.getElementById("search-bar");
 const searchInput = document.getElementById("search-input");
@@ -57,6 +72,11 @@ const editorCloseBtn = document.getElementById("editor-close-btn");
 if (clientIdHeader) {
   clientIdHeader.textContent = `${clientId} - File Browser`;
 }
+
+let sortField = localStorage.getItem("filebrowser.sortField") || "name";
+let sortOrder = localStorage.getItem("filebrowser.sortOrder") || "asc";
+let filterType = localStorage.getItem("filebrowser.filterType") || "all";
+let dragDepth = 0;
 
 function connect() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -297,33 +317,117 @@ function updateBreadcrumb(path) {
   });
 }
 
-function handleFileList(msg) {
-  if (msg.error) {
-    fileListEl.innerHTML = `<div class="px-4 py-6 text-center text-red-400"><i class="fa-solid fa-exclamation-triangle mr-2"></i>${escapeHtml(msg.error)}</div>`;
-    return;
+function getFileExt(name = "") {
+  const idx = name.lastIndexOf(".");
+  if (idx < 0 || idx === name.length - 1) return "";
+  return name.slice(idx + 1).toLowerCase();
+}
+
+function entryMatchesFilter(entry, mode) {
+  if (mode === "all") return true;
+  if (mode === "dirs") return !!entry.isDir;
+  if (mode === "files") return !entry.isDir;
+  if (entry.isDir) return false;
+
+  const ext = getFileExt(entry.name);
+  const imageExt = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico"]);
+  const docExt = new Set(["txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "json", "xml", "yaml", "yml"]);
+  const archiveExt = new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz"]);
+  const execExt = new Set(["exe", "msi", "bat", "cmd", "ps1", "sh", "appimage", "bin", "com"]);
+
+  if (mode === "images") return imageExt.has(ext);
+  if (mode === "docs") return docExt.has(ext);
+  if (mode === "archives") return archiveExt.has(ext);
+  if (mode === "executables") return execExt.has(ext);
+  return true;
+}
+
+function sortEntries(entries, field, order) {
+  const dirRank = (entry) => (entry.isDir ? 0 : 1);
+  const factor = order === "desc" ? -1 : 1;
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+  return [...entries].sort((a, b) => {
+    const dirDiff = dirRank(a) - dirRank(b);
+    if (dirDiff !== 0) return dirDiff;
+
+    let valueA = a.name || "";
+    let valueB = b.name || "";
+
+    if (field === "size") {
+      valueA = Number(a.size || 0);
+      valueB = Number(b.size || 0);
+    } else if (field === "modified") {
+      valueA = Number(a.modTime || 0);
+      valueB = Number(b.modTime || 0);
+    } else if (field === "type") {
+      valueA = a.isDir ? "" : getFileExt(a.name);
+      valueB = b.isDir ? "" : getFileExt(b.name);
+    }
+
+    if (typeof valueA === "number" && typeof valueB === "number") {
+      if (valueA === valueB) {
+        return factor * collator.compare(a.name || "", b.name || "");
+      }
+      return factor * (valueA - valueB);
+    }
+
+    const diff = collator.compare(String(valueA), String(valueB));
+    if (diff !== 0) return factor * diff;
+    return factor * collator.compare(a.name || "", b.name || "");
+  });
+}
+
+function applySortAndFilterEntries(entries) {
+  const filtered = entries.filter((entry) => entryMatchesFilter(entry, filterType));
+  return sortEntries(filtered, sortField, sortOrder);
+}
+
+function updateSortOrderButton() {
+  if (!sortOrderBtn) return;
+  sortOrderBtn.textContent = sortOrder === "asc" ? "Asc" : "Desc";
+}
+
+function updateDirectorySummaryAndPaging(totalCount, shownCount) {
+  if (fileCountSummaryEl) {
+    fileCountSummaryEl.textContent = `${totalCount} items`;
+  }
+}
+
+function clearVirtualizedListMode() {
+  if (virtualRenderRaf) {
+    cancelAnimationFrame(virtualRenderRaf);
+    virtualRenderRaf = null;
+  }
+  if (virtualScrollHandler) {
+    window.removeEventListener("scroll", virtualScrollHandler);
+    virtualScrollHandler = null;
+  }
+  if (virtualResizeHandler) {
+    window.removeEventListener("resize", virtualResizeHandler);
+    virtualResizeHandler = null;
+  }
+  isVirtualizedList = false;
+  fileListEl.classList.add("divide-y", "divide-slate-800");
+}
+
+function renderDirectoryStandard(entries, canGoUp, parentPath, disableAnimations) {
+  clearVirtualizedListMode();
+
+  if (!disableAnimations) {
+    fileListEl.style.opacity = "0";
+    fileListEl.style.transform = "translateX(20px)";
+  } else {
+    fileListEl.style.transition = "none";
+    fileListEl.style.opacity = "1";
+    fileListEl.style.transform = "translateX(0)";
   }
 
-  lastSuccessfulResponse = Date.now();
-  updateStatus("connected", "Connected");
-  enableControls(true);
-
-  currentPath = msg.path;
-  const entries = msg.entries || [];
-
-  selectedFiles.clear();
-  updateSelectionUI();
-
-  fileListEl.style.opacity = "0";
-  fileListEl.style.transform = "translateX(20px)";
-
-  setTimeout(() => {
+  const renderList = () => {
     fileListEl.innerHTML = "";
 
-    const canGoUp = shouldShowParentDirectory(currentPath);
     if (canGoUp) {
-      const parentPath = getParentPath(currentPath);
-      const parentRow = createParentRow(parentPath);
-      fileListEl.appendChild(parentRow);
+      fileListEl.appendChild(createParentRow(parentPath));
     }
 
     if (entries.length === 0 && !canGoUp) {
@@ -334,24 +438,127 @@ function handleFileList(msg) {
       return;
     }
 
-    entries.sort((a, b) => {
-      if (a.isDir && !b.isDir) return -1;
-      if (!a.isDir && b.isDir) return 1;
-      return a.name.localeCompare(b.name);
-    });
-
     entries.forEach((entry, index) => {
       const row = createFileRow(entry);
-      row.style.animationDelay = `${index * 0.02}s`;
-      row.classList.add("card-animate");
+      if (!disableAnimations) {
+        row.style.animationDelay = `${index * 0.02}s`;
+        row.classList.add("card-animate");
+      }
       fileListEl.appendChild(row);
     });
 
-    fileListEl.style.transition =
-      "opacity 0.3s ease-out, transform 0.3s ease-out";
-    fileListEl.style.opacity = "1";
-    fileListEl.style.transform = "translateX(0)";
-  }, 150);
+    if (!disableAnimations) {
+      fileListEl.style.transition =
+        "opacity 0.3s ease-out, transform 0.3s ease-out";
+      fileListEl.style.opacity = "1";
+      fileListEl.style.transform = "translateX(0)";
+    }
+  };
+
+  if (disableAnimations) {
+    renderList();
+  } else {
+    setTimeout(renderList, 150);
+  }
+}
+
+function renderDirectoryVirtualized(entries, canGoUp, parentPath) {
+  clearVirtualizedListMode();
+  isVirtualizedList = true;
+  fileListEl.style.transition = "none";
+  fileListEl.style.opacity = "1";
+  fileListEl.style.transform = "translateX(0)";
+  fileListEl.classList.remove("divide-y", "divide-slate-800");
+  fileListEl.innerHTML = "";
+
+  if (canGoUp) {
+    fileListEl.appendChild(createParentRow(parentPath));
+  }
+
+  const host = document.createElement("div");
+  const topSpacer = document.createElement("div");
+  const rowsContainer = document.createElement("div");
+  const bottomSpacer = document.createElement("div");
+
+  host.className = "virtualized-list-host";
+  host.appendChild(topSpacer);
+  host.appendChild(rowsContainer);
+  host.appendChild(bottomSpacer);
+  fileListEl.appendChild(host);
+
+  const renderWindow = () => {
+    const hostTop = host.getBoundingClientRect().top + window.scrollY;
+    const viewportTop = window.scrollY;
+    const viewportBottom = viewportTop + window.innerHeight;
+    const relativeTop = Math.max(0, viewportTop - hostTop);
+    const relativeBottom = Math.max(0, viewportBottom - hostTop);
+
+    let start = Math.floor(relativeTop / VIRTUAL_ROW_HEIGHT) - VIRTUAL_OVERSCAN;
+    let end = Math.ceil(relativeBottom / VIRTUAL_ROW_HEIGHT) + VIRTUAL_OVERSCAN;
+
+    start = Math.max(0, start);
+    end = Math.min(entries.length, Math.max(start + 1, end));
+
+    topSpacer.style.height = `${start * VIRTUAL_ROW_HEIGHT}px`;
+    bottomSpacer.style.height = `${Math.max(0, (entries.length - end) * VIRTUAL_ROW_HEIGHT)}px`;
+
+    rowsContainer.innerHTML = "";
+    for (let i = start; i < end; i += 1) {
+      rowsContainer.appendChild(createFileRow(entries[i]));
+    }
+  };
+
+  const scheduleRender = () => {
+    if (virtualRenderRaf) return;
+    virtualRenderRaf = requestAnimationFrame(() => {
+      virtualRenderRaf = null;
+      renderWindow();
+    });
+  };
+
+  virtualScrollHandler = () => scheduleRender();
+  virtualResizeHandler = () => scheduleRender();
+  window.addEventListener("scroll", virtualScrollHandler, { passive: true });
+  window.addEventListener("resize", virtualResizeHandler);
+
+  renderWindow();
+}
+
+function renderCurrentDirectory() {
+  filteredDirectoryEntries = applySortAndFilterEntries(directoryEntries);
+  const visibleEntries = filteredDirectoryEntries;
+  updateDirectorySummaryAndPaging(visibleEntries.length, visibleEntries.length);
+
+  const canGoUp = shouldShowParentDirectory(currentPath);
+  const parentPath = canGoUp ? getParentPath(currentPath) : ".";
+
+  if (visibleEntries.length > VIRTUALIZATION_THRESHOLD) {
+    renderDirectoryVirtualized(visibleEntries, canGoUp, parentPath);
+    return;
+  }
+
+  const disableAnimations = visibleEntries.length > 50;
+  renderDirectoryStandard(visibleEntries, canGoUp, parentPath, disableAnimations);
+}
+
+function handleFileList(msg) {
+  if (msg.error) {
+    clearVirtualizedListMode();
+    fileListEl.innerHTML = `<div class="px-4 py-6 text-center text-red-400"><i class="fa-solid fa-exclamation-triangle mr-2"></i>${escapeHtml(msg.error)}</div>`;
+    updateDirectorySummaryAndPaging(0, 0);
+    return;
+  }
+
+  lastSuccessfulResponse = Date.now();
+  updateStatus("connected", "Connected");
+  enableControls(true);
+
+  currentPath = msg.path;
+  directoryEntries = Array.isArray(msg.entries) ? msg.entries : [];
+
+  selectedFiles.clear();
+  updateSelectionUI();
+  renderCurrentDirectory();
 }
 
 function shouldShowParentDirectory(path) {
@@ -1232,6 +1439,95 @@ fileInput.onchange = async (e) => {
   listFiles(currentPath);
 };
 
+async function uploadMultipleFiles(files) {
+  for (const file of files) {
+    await uploadFile(file);
+  }
+  listFiles(currentPath);
+}
+
+function hasFileDrag(event) {
+  const types = Array.from(event.dataTransfer?.types || []);
+  return types.includes("Files");
+}
+
+function setDropTargetActive(active) {
+  if (!fileListPanel) return;
+  fileListPanel.classList.toggle("ring-2", active);
+  fileListPanel.classList.toggle("ring-blue-500", active);
+  fileListPanel.classList.toggle("ring-offset-2", active);
+  fileListPanel.classList.toggle("ring-offset-slate-950", active);
+  fileListPanel.classList.toggle("bg-blue-500/5", active);
+}
+
+function setupDragAndDropUpload() {
+  if (!fileListPanel) return;
+
+  fileListPanel.addEventListener("dragenter", (e) => {
+    if (!hasFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    setDropTargetActive(true);
+  });
+
+  fileListPanel.addEventListener("dragover", (e) => {
+    if (!hasFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setDropTargetActive(true);
+  });
+
+  fileListPanel.addEventListener("dragleave", (e) => {
+    if (!hasFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      setDropTargetActive(false);
+    }
+  });
+
+  fileListPanel.addEventListener("drop", async (e) => {
+    if (!hasFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    setDropTargetActive(false);
+
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length === 0) return;
+
+    notifyToast(`Uploading ${files.length} file(s)...`, "info", 3000);
+    await uploadMultipleFiles(files);
+  });
+}
+
+if (sortFieldEl) {
+  sortFieldEl.value = sortField;
+  sortFieldEl.addEventListener("change", () => {
+    sortField = sortFieldEl.value;
+    localStorage.setItem("filebrowser.sortField", sortField);
+    renderCurrentDirectory();
+  });
+}
+
+if (filterTypeEl) {
+  filterTypeEl.value = filterType;
+  filterTypeEl.addEventListener("change", () => {
+    filterType = filterTypeEl.value;
+    localStorage.setItem("filebrowser.filterType", filterType);
+    renderCurrentDirectory();
+  });
+}
+
+if (sortOrderBtn) {
+  updateSortOrderButton();
+  sortOrderBtn.addEventListener("click", () => {
+    sortOrder = sortOrder === "asc" ? "desc" : "asc";
+    localStorage.setItem("filebrowser.sortOrder", sortOrder);
+    updateSortOrderButton();
+    renderCurrentDirectory();
+  });
+}
+
 function waitForUploadAck(transfer, offset, timeoutMs) {
   return new Promise((resolve, reject) => {
     const existing = transfer.pendingAcks.get(offset);
@@ -1450,6 +1746,7 @@ document.addEventListener("click", (e) => {
   }
 });
 
+setupDragAndDropUpload();
 updateStatus("connecting", "Connecting...");
 updateBackButton();
 connect();
@@ -1602,6 +1899,8 @@ searchInput.addEventListener("keypress", (e) => {
 });
 
 function performSearch(pattern, searchContent) {
+  clearVirtualizedListMode();
+  updateDirectorySummaryAndPaging(0, 0);
   const searchId = `search-${Date.now()}`;
   const cmdId = `search-cmd-${Date.now()}`;
   const msg = {
@@ -1624,6 +1923,8 @@ function performSearch(pattern, searchContent) {
 }
 
 function handleFileSearchResult(msg) {
+  clearVirtualizedListMode();
+  updateDirectorySummaryAndPaging(0, 0);
   if (msg.error) {
     fileListEl.innerHTML = `<div class="px-4 py-6 text-center text-red-400"><i class="fa-solid fa-exclamation-triangle mr-2"></i>${escapeHtml(msg.error)}</div>`;
     return;

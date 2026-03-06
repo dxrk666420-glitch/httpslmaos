@@ -461,8 +461,56 @@
           <div id="breadcrumb" class="flex items-center gap-1 text-sm"></div>
         </div>
 
+        <!-- List Controls -->
+        <div
+          class="px-4 py-3 bg-slate-900/70 border border-slate-800 rounded-lg flex items-center justify-between gap-3 flex-wrap"
+        >
+          <div class="flex items-center gap-2 flex-wrap">
+            <label for="sort-field" class="text-xs uppercase tracking-wide text-slate-400"
+              >Sort</label
+            >
+            <select
+              id="sort-field"
+              class="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-sm text-slate-100"
+            >
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+              <option value="modified">Modified</option>
+              <option value="type">Type</option>
+            </select>
+            <button
+              id="sort-order-btn"
+              class="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 text-sm text-slate-100"
+              type="button"
+            >
+              Asc
+            </button>
+
+            <label for="filter-type" class="text-xs uppercase tracking-wide text-slate-400"
+              >Filter</label
+            >
+            <select
+              id="filter-type"
+              class="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-sm text-slate-100"
+            >
+              <option value="all">All</option>
+              <option value="dirs">Folders</option>
+              <option value="files">Files</option>
+              <option value="images">Images</option>
+              <option value="docs">Documents</option>
+              <option value="archives">Archives</option>
+              <option value="executables">Executables</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <span id="file-count-summary" class="text-sm text-slate-400">0 items</span>
+          </div>
+        </div>
+
         <!-- File List -->
         <div
+          id="file-list-panel"
           class="bg-slate-900/70 border border-slate-800 rounded-lg overflow-hidden"
         >
           <div
@@ -603,6 +651,6 @@
     <input type="file" id="file-input" style="display: none" multiple />
 
     <script type="module" src="/assets/nav.js"></script>
-    <script type="module" src="/assets/filebrowser.js?v=uploadfix-20260306-2"></script>
+    <script type="module" src="/assets/filebrowser.js?v=uploadfix-20260306-3"></script>
   </body>
 </html>
