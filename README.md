@@ -70,6 +70,23 @@ These can be changed with:
 
 It's literally just docker any question chatgpt can answer so don't worry.
 
+## Reverse proxy TLS offload (Render, etc.)
+
+Some platforms (such as Render Web Services) terminate TLS at the edge and expect your container to serve plain HTTP on the internal port.
+
+For those platforms, set:
+
+- `OVERLORD_TLS_OFFLOAD=true`
+
+Defaults are unchanged. If `OVERLORD_TLS_OFFLOAD` is not set (or false), Overlord keeps its current behavior and serves HTTPS/WSS directly with configured/self-signed/certbot certificates.
+
+When offload mode is enabled:
+
+- Container listener is `http://0.0.0.0:$PORT` (internal only)
+- External URL should still be `https://...` via your platform proxy
+- Health checks should target `http://localhost:$PORT/health` inside the container
+- Do not expose the internal container port directly to the public internet
+
 ## Using-Production-packages-(Windows)
 
 Build a production-ready package where the server can still build client binaries at runtime:

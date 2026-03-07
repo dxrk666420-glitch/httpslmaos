@@ -128,6 +128,13 @@ const TLS_KEY_PATH = config.tls.keyPath;
 const TLS_CA_PATH = config.tls.caPath; 
 const TLS_CERTBOT = config.tls.certbot;
 
+function envFlagEnabled(name: string): boolean {
+  const value = String(process.env[name] || "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+const TLS_OFFLOAD = envFlagEnabled("OVERLORD_TLS_OFFLOAD");
+
 const pluginLoadedByClient = new Map<string, Set<string>>();
 const pendingPluginEvents = new Map<string, Array<{ event: string; payload: any }>>();
 const pluginLoadingByClient = new Map<string, Set<string>>();
@@ -221,12 +228,27 @@ const pendingScripts = new Map<string, PendingScript>();
 
 async function startServer() {
   await loadPluginState();
-  const tls = await prepareTlsOptions({
-    certPath: TLS_CERT_PATH,
-    keyPath: TLS_KEY_PATH,
-    caPath: TLS_CA_PATH,
-    certbot: TLS_CERTBOT,
-  });
+  let tls:
+    | {
+        tlsOptions: { cert?: string; key?: string; ca?: string };
+        certPathUsed: string;
+        source: "certbot" | "configured" | "self-signed";
+      }
+    | null = null;
+
+  if (TLS_OFFLOAD) {
+    logger.warn(
+      "[TLS] OVERLORD_TLS_OFFLOAD=true: TLS is expected to terminate at an external proxy/load balancer.",
+    );
+    logger.warn("[TLS] Running internal HTTP listener only. Do not expose the container port directly to the internet.");
+  } else {
+    tls = await prepareTlsOptions({
+      certPath: TLS_CERT_PATH,
+      keyPath: TLS_KEY_PATH,
+      caPath: TLS_CA_PATH,
+      certbot: TLS_CERTBOT,
+    });
+  }
 
   const routeDeps = {
     notificationsConfig: {
@@ -349,7 +371,7 @@ async function startServer() {
   const server = Bun.serve<SocketData>({
     port: PORT,
     hostname: HOST,
-    tls: tls.tlsOptions,
+    ...(tls ? { tls: tls.tlsOptions } : {}),
     idleTimeout: 255,
     fetch: createHttpFetchHandler({
       metrics,
@@ -397,7 +419,21 @@ async function startServer() {
     disconnectTimeoutMs: DISCONNECT_TIMEOUT_MS,
   });
 
-  logServerStartup(server, tls.certPathUsed, tls.source);
+  if (tls) {
+    logServerStartup(server, tls.certPathUsed, tls.source);
+  } else {
+    const hostname = server.hostname || "0.0.0.0";
+    const port = server.port ?? 0;
+    logger.info("========================================");
+    logger.info("Overlord Server - PROXY TLS OFFLOAD MODE");
+    logger.info("========================================");
+    logger.info(`HTTP (internal): http://${hostname}:${port}`);
+    logger.info(`WS   (internal): ws://${hostname}:${port}/api/clients/{id}/stream/ws`);
+    logger.info("");
+    logger.info("External access should be HTTPS/WSS via your reverse proxy platform.");
+    logger.info("Set this mode only when TLS is terminated by the platform (for example Render). ");
+    logger.info("========================================");
+  }
 }
 
 startServer();
