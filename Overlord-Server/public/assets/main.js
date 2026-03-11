@@ -65,6 +65,19 @@ function detectClientPlatform(clientId) {
   return "unknown";
 }
 
+function getClientCard(clientId) {
+  if (!clientId) return null;
+  const selectorId =
+    typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(clientId)
+      : clientId;
+  return document.querySelector(`article[data-id="${selectorId}"]`);
+}
+
+function isClientOnline(clientId) {
+  return getClientCard(clientId)?.dataset.online === "true";
+}
+
 function applyMenuSupportRules(clientId) {
   const platform = detectClientPlatform(clientId);
   const isWindows = platform === "windows";
@@ -240,7 +253,7 @@ function initializeRenderer() {
     pageLabel,
     openMenu: (id, x, y) => {
       applyMenuSupportRules(id);
-      openMenu(id, x, y, setContext);
+      openMenu(id, x, y, setContext, { isOnline: isClientOnline(id) });
       loadPluginsForClient(id);
     },
     openModal,
@@ -510,6 +523,27 @@ window.removeClientFromDashboard = async (clientId) => {
   }
 };
 
+window.setClientNickname = async (clientId, nickname) => {
+  if (!clientId) return false;
+  try {
+    const res = await fetch(`/api/clients/${clientId}/nickname`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nickname: nickname || "" }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to update client nickname");
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(err);
+    alert("Failed to update client nickname");
+    return false;
+  }
+};
+
 window.banClient = async (clientId) => {
   if (!clientId) return;
   if (!confirm(`Ban IP for ${clientId} and block future connections?`)) return;
@@ -684,6 +718,31 @@ menu.addEventListener("click", async (e) => {
       updateBulkToolbar();
       setTimeout(() => loadWithOptions({ force: true }), 200);
     }
+    closeMenu(clearContext);
+    return;
+  } else if (action === "set-nickname") {
+    const card = getClientCard(contextCard);
+    const currentNickname = (card?.dataset.nickname || "").trim();
+    const input = prompt(
+      `Set nickname for ${contextCard}\n\nLeave blank to clear nickname.`,
+      currentNickname,
+    );
+    if (input === null) {
+      closeMenu(clearContext);
+      return;
+    }
+
+    const trimmed = input.trim();
+    const updated = await window.setClientNickname(contextCard, trimmed || null);
+    if (updated) {
+      setTimeout(() => loadWithOptions({ force: true }), 200);
+    }
+    closeMenu(clearContext);
+    return;
+  }
+
+  if (!isClientOnline(contextCard)) {
+    alert("Client is offline. This command can only be used while the client is online.");
     closeMenu(clearContext);
     return;
   }

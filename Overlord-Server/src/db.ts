@@ -20,6 +20,7 @@ db.run(`
     arch TEXT,
     version TEXT,
     user TEXT,
+    nickname TEXT,
     monitors INTEGER,
     country TEXT,
     last_seen INTEGER,
@@ -35,6 +36,9 @@ try {
 } catch {}
 try {
   db.run(`ALTER TABLE clients ADD COLUMN ip TEXT`);
+} catch {}
+try {
+  db.run(`ALTER TABLE clients ADD COLUMN nickname TEXT`);
 } catch {}
 db.run(
   `CREATE INDEX IF NOT EXISTS idx_clients_online_last_seen ON clients(online, last_seen DESC);`,
@@ -134,6 +138,7 @@ export function upsertClientRow(
        arch=COALESCE(excluded.arch, clients.arch),
        version=COALESCE(excluded.version, clients.version),
        user=COALESCE(excluded.user, clients.user),
+      nickname=clients.nickname,
        monitors=COALESCE(excluded.monitors, clients.monitors),
        country=COALESCE(excluded.country, clients.country),
        last_seen=excluded.last_seen,
@@ -176,6 +181,26 @@ export function setOnlineState(id: string, online: boolean) {
 
 export function deleteClientRow(id: string) {
   db.run(`DELETE FROM clients WHERE id=?`, id);
+}
+
+export function getClientOnlineState(id: string): boolean | null {
+  const row = db.query<{ online: number }>(`SELECT online FROM clients WHERE id=?`).get(id);
+  if (!row) return null;
+  return row.online === 1;
+}
+
+export function setClientNickname(id: string, nickname: string | null): boolean {
+  const result = db.run(
+    `UPDATE clients SET nickname=? WHERE id=?`,
+    nickname && nickname.trim() ? nickname.trim() : null,
+    id,
+  );
+  return ((result as any)?.changes || 0) > 0;
+}
+
+export function getClientNickname(id: string): string | null {
+  const row = db.query<{ nickname: string | null }>(`SELECT nickname FROM clients WHERE id=?`).get(id);
+  return row?.nickname ?? null;
 }
 
 export function getClientIp(id: string): string | null {
@@ -242,10 +267,10 @@ export function listClients(filters: ListFilters): ListResult {
 
   if (search) {
     where.push(
-      "(LOWER(COALESCE(host,'')) LIKE ? OR LOWER(COALESCE(user,'')) LIKE ? OR LOWER(id) LIKE ?)",
+      "(LOWER(COALESCE(host,'')) LIKE ? OR LOWER(COALESCE(user,'')) LIKE ? OR LOWER(COALESCE(nickname,'')) LIKE ? OR LOWER(id) LIKE ?)",
     );
     const needle = `%${search}%`;
-    params.push(needle, needle, needle);
+    params.push(needle, needle, needle, needle);
   }
 
   if (statusFilter === "online") {
@@ -282,9 +307,9 @@ export function listClients(filters: ListFilters): ListResult {
       case "ping_desc":
         return "ORDER BY ping_ms IS NULL, ping_ms DESC";
       case "host_asc":
-        return "ORDER BY LOWER(host) ASC";
+        return "ORDER BY LOWER(COALESCE(nickname, host)) ASC";
       case "host_desc":
-        return "ORDER BY LOWER(host) DESC";
+        return "ORDER BY LOWER(COALESCE(nickname, host)) DESC";
       default:
         return "ORDER BY last_seen DESC";
     }
@@ -302,7 +327,7 @@ export function listClients(filters: ListFilters): ListResult {
 
   const rows = db
     .query<any>(
-      `SELECT id, hwid, role, host, os, arch, version, user, monitors, country, last_seen as lastSeen, online, ping_ms as pingMs
+      `SELECT id, hwid, role, host, os, arch, version, user, nickname, monitors, country, last_seen as lastSeen, online, ping_ms as pingMs
        FROM clients
        ${whereSql}
        ${orderBy}
@@ -320,6 +345,7 @@ export function listClients(filters: ListFilters): ListResult {
     arch: c.arch || "arch?",
     version: c.version || "0",
     user: c.user,
+    nickname: c.nickname || null,
     monitors: c.monitors,
     country: c.country || "ZZ",
     pingMs: c.pingMs ?? null,

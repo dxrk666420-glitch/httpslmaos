@@ -15,6 +15,7 @@ export type ClientInfo = {
   arch?: string;
   version?: string;
   user?: string;
+  nickname?: string;
   monitors?: number;
   monitorInfo?: { width: number; height: number }[];
   country?: string;

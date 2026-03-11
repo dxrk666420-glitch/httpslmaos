@@ -6,10 +6,12 @@ import {
   banIp,
   clientExists,
   deleteClientRow,
+  getClientOnlineState,
   getClientIp,
   isIpBanned,
   listBannedIps,
   listClients,
+  setClientNickname,
   setOnlineState,
   unbanIp,
 } from "../../db";
@@ -238,6 +240,13 @@ export async function handleClientRoutes(
       return new Response("Forbidden: Client access denied", { status: 403 });
     }
     const target = clientManager.getClient(targetId);
+    const isOnlineInDb = getClientOnlineState(targetId);
+    if (target?.online || isOnlineInDb === true) {
+      return Response.json(
+        { error: "Client is online. Remove from dashboard is only allowed for offline clients." },
+        { status: 409 },
+      );
+    }
     const existsInDb = clientExists(targetId);
     if (!target && !existsInDb) {
       return Response.json({ error: "Client not found" }, { status: 404 });
@@ -267,6 +276,62 @@ export async function handleClientRoutes(
     });
 
     return Response.json({ ok: true }, { headers: deps.CORS_HEADERS });
+  }
+
+  const clientNicknameMatch = url.pathname.match(/^\/api\/clients\/([^/]+)\/nickname$/);
+  if (req.method === "PATCH" && clientNicknameMatch) {
+    const user = await authenticateRequest(req);
+    if (!user) return new Response("Unauthorized", { status: 401 });
+
+    try {
+      requirePermission(user, "clients:control");
+    } catch (error) {
+      if (error instanceof Response) return error;
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const targetId = clientNicknameMatch[1];
+    if (!canUserAccessClient(user.userId, user.role, targetId)) {
+      return new Response("Forbidden: Client access denied", { status: 403 });
+    }
+    if (!clientExists(targetId)) {
+      return Response.json({ error: "Client not found" }, { status: 404 });
+    }
+
+    let body: any = {};
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const rawNickname = typeof body?.nickname === "string" ? body.nickname : "";
+    const trimmed = rawNickname.trim();
+    if (trimmed.length > 64) {
+      return Response.json(
+        { error: "Nickname must be 64 characters or fewer" },
+        { status: 400 },
+      );
+    }
+
+    const nickname = trimmed.length ? trimmed : null;
+    const updated = setClientNickname(targetId, nickname);
+    if (!updated) {
+      return Response.json({ error: "Client not found" }, { status: 404 });
+    }
+
+    const ip = server.requestIP(req)?.address || "unknown";
+    logAudit({
+      timestamp: Date.now(),
+      username: user.username,
+      ip,
+      action: AuditAction.COMMAND,
+      targetClientId: targetId,
+      details: nickname ? `set_nickname:${nickname}` : "clear_nickname",
+      success: true,
+    });
+
+    return Response.json({ ok: true, nickname }, { headers: deps.CORS_HEADERS });
   }
 
   if (req.method === "POST") {

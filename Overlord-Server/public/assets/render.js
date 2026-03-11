@@ -132,8 +132,6 @@ export function createRenderer({
     card.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       if (isViewer) return;
-      const isOnline = card.dataset.online === "true";
-      if (!isOnline) return;
       const clientId = card.dataset.id;
       if (!clientId) return;
       const { clientX, clientY } = e;
@@ -167,12 +165,15 @@ export function createRenderer({
 
     card.dataset.online = String(!!client.online);
     card.dataset.os = String(client.os || "").toLowerCase();
+    card.dataset.nickname = String(client.nickname || "");
     const os = osBadge(client.os || "unknown");
     const arch = archBadge(client.arch || "");
     const ver = versionBadge(client.version || "");
     const mons = monitorsBadge(client.monitors);
     const deviceId = shortId(client.id);
     const hwid = shortId(client.hwid || "");
+    const nickname = String(client.nickname || "").trim();
+    const displayName = nickname || client.host || deviceId;
     card.className = `card rounded-xl border border-slate-800 bg-slate-900/70 p-4 shadow-lg ${client.online ? "" : "card-offline"} tone-${os.tone}`;
     const cardThumb = client.thumbnail
       ? (() => {
@@ -202,7 +203,8 @@ export function createRenderer({
         <div class="flex-1 min-w-[240px] flex flex-col gap-2">
           <div class="flex items-center gap-3 flex-wrap text-lg font-semibold">
             <span class="text-2xl">${countryToFlag(client.country)}</span>
-            <span>${escapeHtml(client.host || deviceId)}</span>
+            <span>${escapeHtml(displayName)}</span>
+            ${nickname && client.host ? `<span class="pill pill-ghost text-xs"><i class="fa-solid fa-laptop"></i> ${escapeHtml(client.host)}</span>` : ""}
             <span class="text-slate-300 text-lg font-semibold flex items-center gap-1"><i class="fa-solid fa-user"></i> ${escapeHtml(client.user || "unknown")}</span>
             <span class="pill ${client.online ? "pill-online" : "pill-offline"}">
               <i class="fa-solid fa-circle"></i>
@@ -223,7 +225,7 @@ export function createRenderer({
         </div>
         <div class="flex items-center gap-3">
           <span class="text-emerald-300 font-mono text-sm inline-flex items-center gap-2"><i class="fa-solid fa-satellite-dish"></i> ${formatPing(client.pingMs)}</span>
-          ${isViewer ? "" : `<button ${client.online ? "" : "disabled"} class="command-btn inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800 bg-slate-800/70 hover:bg-slate-700 disabled:opacity-50" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-bars"></i> Commands</button>`}
+          ${isViewer ? "" : `<button class="command-btn inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800 bg-slate-800/70 hover:bg-slate-700" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-bars"></i> Commands</button>`}
           ${isViewer ? "" : `<button class="ban-btn inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-red-800 bg-red-900/60 hover:bg-red-800 text-red-100" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-ban"></i> Ban</button>`}
         </div>
       </div>
