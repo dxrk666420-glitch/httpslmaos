@@ -652,7 +652,7 @@ export function getBuildByTag(buildTag: string): BuildRecord | null {
 }
 
 export function getAllBuilds(userId?: number, role?: string): BuildRecord[] {
-  if (role !== "admin") {
+  if (role !== undefined && role !== "admin") {
     if (userId == null) {
       return [];
     }
