@@ -690,7 +690,7 @@ import { encodeMsgpack, decodeMsgpack } from "./msgpack-helpers.js";
   });
   canvas.addEventListener("mousedown", function (e) {
     if (!mouseCtrl.checked) return;
-    canvas.focus();
+    canvas.focus({ preventScroll: true });
     const pt = getCanvasPoint(e);
     if (pt) {
       pendingMove = pt;
@@ -728,12 +728,12 @@ import { encodeMsgpack, decodeMsgpack } from "./msgpack-helpers.js";
 
   canvas.setAttribute("tabindex", "0");
   canvas.addEventListener("click", function () {
-    canvas.focus();
+    canvas.focus({ preventScroll: true });
   });
   if (kbdCtrl) {
     kbdCtrl.addEventListener("change", function () {
       if (kbdCtrl.checked) {
-        canvas.focus();
+        canvas.focus({ preventScroll: true });
       }
     });
   }

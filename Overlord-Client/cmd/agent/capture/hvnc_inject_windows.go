@@ -450,7 +450,7 @@ func cloneBrowserProfile(browserName string, srcUserData string, lite bool, onPr
 			}
 		} else {
 			// Top-level files (Local State, etc.)
-			n, err := copyFileCount(src, dst)
+			n, err := forceCopyFile(src, dst)
 			if err != nil {
 				log.Printf("hvnc %s: warning: could not copy %s: %v", browserName, name, err)
 			} else {
@@ -551,7 +551,7 @@ func cloneProfileDirProgress(browserName, src, dst string, skipDirs map[string]b
 				log.Printf("hvnc %s: warning: could not copy %s: %v", browserName, name, err)
 			}
 		} else {
-			n, err := copyFileCount(s, d)
+			n, err := forceCopyFile(s, d)
 			if err != nil {
 				log.Printf("hvnc %s: warning: could not copy %s: %v", browserName, name, err)
 			} else {
@@ -592,7 +592,7 @@ func copyDirProgress(src, dst string, report func(int64)) error {
 		if info.IsDir() {
 			return os.MkdirAll(target, 0700)
 		}
-		n, err := copyFileCount(path, target)
+		n, err := forceCopyFile(path, target)
 		if err == nil {
 			report(n)
 		}
