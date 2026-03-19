@@ -3,6 +3,9 @@ package handlers
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,7 +14,19 @@ import (
 	"overlord-client/cmd/agent/wire"
 
 	"github.com/vmihailenco/msgpack/v5"
+	"nhooyr.io/websocket"
 )
+
+const disconnectHelperEnv = "GO_WANT_DISCONNECT_HELPER_PROCESS"
+const disconnectMsgFileEnv = "GO_DISCONNECT_MSG_FILE"
+
+type disconnectExitFileWriter struct {
+	path string
+}
+
+func (w *disconnectExitFileWriter) Write(ctx context.Context, messageType websocket.MessageType, p []byte) error {
+	return os.WriteFile(w.path, append([]byte(nil), p...), 0600)
+}
 
 func TestHandlePing(t *testing.T) {
 	writer := &testWriter{}
@@ -204,29 +219,46 @@ func TestHandleCommand_UnknownCommand(t *testing.T) {
 }
 
 func TestHandleCommand_DisconnectTriggersReconnect(t *testing.T) {
-	writer := &testWriter{}
-	env := &rt.Env{
-		Conn: writer,
-		Cfg:  config.Config{},
+	if os.Getenv(disconnectHelperEnv) == "1" {
+		msgPath := os.Getenv(disconnectMsgFileEnv)
+		if msgPath == "" {
+			t.Fatal("missing disconnect message file path")
+		}
+
+		env := &rt.Env{
+			Conn: &disconnectExitFileWriter{path: msgPath},
+			Cfg:  config.Config{},
+		}
+
+		ctx := context.Background()
+		envelope := map[string]interface{}{
+			"type":        "command",
+			"commandType": "disconnect",
+			"id":          "cmd-disconnect-1",
+		}
+
+		err := HandleCommand(ctx, env, envelope)
+		t.Fatalf("expected process exit for disconnect, got return err=%v", err)
 	}
 
-	ctx := context.Background()
-	envelope := map[string]interface{}{
-		"type":        "command",
-		"commandType": "disconnect",
-		"id":          "cmd-disconnect-1",
+	msgPath := filepath.Join(t.TempDir(), "disconnect-msg.bin")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHandleCommand_DisconnectTriggersReconnect$")
+	cmd.Env = append(os.Environ(), disconnectHelperEnv+"=1", disconnectMsgFileEnv+"="+msgPath)
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("expected disconnect helper to exit cleanly, got %v", err)
 	}
 
-	err := HandleCommand(ctx, env, envelope)
-	if !errors.Is(err, ErrReconnect) {
-		t.Fatalf("expected ErrReconnect, got %v", err)
+	raw, err := os.ReadFile(msgPath)
+	if err != nil {
+		t.Fatalf("failed to read disconnect message file: %v", err)
 	}
-	if len(writer.msgs) < 1 {
+	if len(raw) == 0 {
 		t.Fatal("expected command_result response")
 	}
 
 	var result wire.CommandResult
-	if err := msgpack.Unmarshal(writer.msgs[0], &result); err != nil {
+	if err := msgpack.Unmarshal(raw, &result); err != nil {
 		t.Fatalf("failed to unmarshal command_result: %v", err)
 	}
 	if !result.OK {
