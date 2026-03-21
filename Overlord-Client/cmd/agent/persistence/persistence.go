@@ -7,6 +7,8 @@ import (
 
 var DefaultPersistenceMethod = "startup"
 
+var DefaultStartupName = ""
+
 var persistInstallFn func(targetPath string) error = func(_ string) error { return nil }
 
 var persistUninstallFns []func() error

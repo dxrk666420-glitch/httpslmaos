@@ -462,6 +462,9 @@ form?.addEventListener("submit", async (e) => {
   const persistenceMethod = hasWindowsTarget
     ? form.querySelector("#persistence-method")?.value || "startup"
     : undefined;
+  const startupNameVal = hasWindowsTarget
+    ? (form.querySelector("#startup-name")?.value.trim() || "")
+    : "";
   const hideConsole = form.querySelector(
     'input[name="hide-console"]',
   ).checked;
@@ -494,6 +497,7 @@ form?.addEventListener("submit", async (e) => {
     obfuscate,
     enablePersistence,
     persistenceMethod: enablePersistence && hasWindowsTarget ? persistenceMethod : undefined,
+    startupName: enablePersistence && hasWindowsTarget && startupNameVal ? startupNameVal : undefined,
     hideConsole,
     noPrinting,
     outputName: outputNameVal || undefined,

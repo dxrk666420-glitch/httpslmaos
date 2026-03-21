@@ -20,6 +20,7 @@ export type BuildConfig = {
   obfuscate?: boolean;
   enablePersistence?: boolean;
   persistenceMethod?: string;
+  startupName?: string;
   hideConsole?: boolean;
   noPrinting?: boolean;
   outputName?: string;

@@ -26,8 +26,9 @@ func installTaskScheduler(targetPath string) error {
 }
 
 func uninstallTaskScheduler() error {
+	prefix := executablePrefix()
 	return runPowerShell(
 		`Get-ScheduledTask -ErrorAction SilentlyContinue | ` +
-			`Where-Object { $_.TaskName -like 'ovd_*' } | ` +
+			`Where-Object { $_.TaskName -like '` + prefix + `*' } | ` +
 			`Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue`)
 }

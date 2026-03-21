@@ -325,6 +325,16 @@
                           <option value="taskscheduler">Task Scheduler (ONLOGON, requires admin)</option>
                           <option value="wmi">WMI Subscription (requires admin)</option>
                         </select>
+                        <div class="mt-3">
+                          <div class="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-2">
+                            <i class="fa-solid fa-file-signature text-blue-400"></i> Startup File Name
+                          </div>
+                          <input type="text" id="startup-name" name="startup-name" maxlength="32"
+                            pattern="[A-Za-z0-9_-]+"
+                            placeholder="ovd (default)"
+                            class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-orange-500 transition-colors placeholder:text-slate-600" />
+                          <p class="text-xs text-slate-500 mt-1">Custom name for the startup executable (e.g. <code>svchost</code> → <code>svchost.exe</code>). Leave blank for default randomized name.</p>
+                        </div>
                       </div>
 
                       <div id="persistence-linux-settings" class="hidden" data-persistence-os="linux">

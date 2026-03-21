@@ -25,6 +25,11 @@ if "%ENABLE_PERSISTENCE%"=="true" (
     set "LDFLAGS=%LDFLAGS% -X overlord-client/cmd/agent/config.DefaultPersistence=true"
 )
 
+if not "%STARTUP_NAME%"=="" (
+    echo Building with custom startup name: %STARTUP_NAME%
+    set "LDFLAGS=%LDFLAGS% -X overlord-client/cmd/agent/persistence.DefaultStartupName=%STARTUP_NAME%"
+)
+
 if not "%SERVER_URL%"=="" (
     echo Building with custom server URL: %SERVER_URL%
     set "LDFLAGS=%LDFLAGS% -X overlord-client/cmd/agent/config.DefaultServerURL=%SERVER_URL%"

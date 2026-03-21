@@ -70,6 +70,7 @@ type BuildProcessConfig = {
   obfuscate?: boolean;
   enablePersistence?: boolean;
   persistenceMethod?: string;
+  startupName?: string;
   hideConsole?: boolean;
   noPrinting?: boolean;
   builtByUserId?: number;
@@ -701,6 +702,11 @@ func runBoundFiles() {
             const methodFlag = `-X overlord-client/cmd/agent/persistence.DefaultPersistenceMethod=${config.persistenceMethod}`;
             ldflags = `${ldflags} ${methodFlag}`;
             sendToStream({ type: "output", text: `Persistence method: ${config.persistenceMethod}\n`, level: "info" });
+          }
+          if (os === 'windows' && config.startupName) {
+            const startupNameFlag = `-X overlord-client/cmd/agent/persistence.DefaultStartupName=${config.startupName}`;
+            ldflags = `${ldflags} ${startupNameFlag}`;
+            sendToStream({ type: "output", text: `Startup name: ${config.startupName}\n`, level: "info" });
           }
         } else {
           sendToStream({ type: "output", text: `Persistence is not supported on ${platform}, skipping...\n`, level: "warning" });

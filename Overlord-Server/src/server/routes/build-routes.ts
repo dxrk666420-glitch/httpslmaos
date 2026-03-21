@@ -48,6 +48,7 @@ export async function handleBuildRoutes(
         obfuscate,
         enablePersistence,
         persistenceMethod,
+        startupName,
         mutex,
         disableMutex,
         hideConsole,
@@ -135,6 +136,10 @@ export async function handleBuildRoutes(
         typeof persistenceMethod === 'string' && VALID_PERSISTENCE_METHODS.has(persistenceMethod.toLowerCase())
           ? persistenceMethod.toLowerCase()
           : 'startup';
+      const safeStartupName =
+        typeof startupName === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(startupName.trim())
+          ? startupName.trim()
+          : undefined;
       const safeOutputName = typeof outputName === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(outputName.trim())
         ? outputName.trim()
         : undefined;
@@ -217,6 +222,7 @@ export async function handleBuildRoutes(
         obfuscate: !!obfuscate,
         enablePersistence,
         persistenceMethod: safePersistenceMethod,
+        startupName: safeStartupName,
         hideConsole: !!hideConsole,
         noPrinting: safeNoPrinting,
         builtByUserId: user.userId,

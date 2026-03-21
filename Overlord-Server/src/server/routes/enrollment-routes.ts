@@ -66,7 +66,7 @@ export async function handleEnrollmentRoutes(
       return Response.json({ error: "requireApproval must be a boolean" }, { status: 400 });
     }
 
-    await updateEnrollmentConfig(body.requireApproval);
+    await updateEnrollmentConfig({ requireApproval: body.requireApproval });
 
     logAudit({
       timestamp: Date.now(),

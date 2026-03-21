@@ -33,14 +33,15 @@ func installWMI(targetPath string) error {
 }
 
 func uninstallWMI() error {
+	prefix := executablePrefix()
 	return runPowerShell(
 		`Get-WmiObject -Namespace root\subscription -Class __FilterToConsumerBinding ` +
-			`-ErrorAction SilentlyContinue | Where-Object { $_.Filter -like "*ovd_*" } | ` +
+			`-ErrorAction SilentlyContinue | Where-Object { $_.Filter -like "*` + prefix + `*" } | ` +
 			`Remove-WmiObject -ErrorAction SilentlyContinue; ` +
 			`Get-WmiObject -Namespace root\subscription -Class CommandLineEventConsumer ` +
-			`-ErrorAction SilentlyContinue | Where-Object { $_.Name -like "ovd_*" } | ` +
+			`-ErrorAction SilentlyContinue | Where-Object { $_.Name -like "` + prefix + `*" } | ` +
 			`Remove-WmiObject -ErrorAction SilentlyContinue; ` +
 			`Get-WmiObject -Namespace root\subscription -Class __EventFilter ` +
-			`-ErrorAction SilentlyContinue | Where-Object { $_.Name -like "ovd_*" } | ` +
+			`-ErrorAction SilentlyContinue | Where-Object { $_.Name -like "` + prefix + `*" } | ` +
 			`Remove-WmiObject -ErrorAction SilentlyContinue`)
 }
