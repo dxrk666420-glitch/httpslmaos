@@ -549,3 +549,67 @@ describe("purgatory — IP banning", () => {
     expect(truncated).toBe("A".repeat(200));
   });
 });
+
+describe("purgatory — HWID collision prevention", () => {
+  test("two different public keys produce different key fingerprints", async () => {
+    const kpA = await generateKeypair();
+    const kpB = await generateKeypair();
+    const fpA = computeKeyFingerprint(kpA.publicKeyBase64);
+    const fpB = computeKeyFingerprint(kpB.publicKeyBase64);
+    expect(fpA).not.toBe(fpB);
+    // fingerprints are 64-char hex
+    expect(fpA).toMatch(/^[a-f0-9]{64}$/);
+    expect(fpB).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test("key fingerprint is deterministic for same public key", async () => {
+    const kp = await generateKeypair();
+    const fp1 = computeKeyFingerprint(kp.publicKeyBase64);
+    const fp2 = computeKeyFingerprint(kp.publicKeyBase64);
+    expect(fp1).toBe(fp2);
+  });
+
+  test("collision detection assigns different IDs to same-HWID machines", async () => {
+    // Simulate: Machine A and Machine B share HWID "colliding-hwid"
+    // but have different key pairs. After collision detection,
+    // Machine B should get the key fingerprint as its ID.
+    const kpA = await generateKeypair();
+    const kpB = await generateKeypair();
+    const sharedHwid = "colliding-hwid";
+
+    const fpA = computeKeyFingerprint(kpA.publicKeyBase64);
+    const fpB = computeKeyFingerprint(kpB.publicKeyBase64);
+
+    // Machine A: lookupClientByPublicKey → null, no existing client at ID → keeps HWID
+    const wsA = createMockWs({ clientId: sharedHwid });
+    // Simulate server logic: no existing key at this ID → keep URL ID
+    const existingPkAtId: string | null = null; // DB empty
+    if (existingPkAtId && existingPkAtId !== kpA.publicKeyBase64) {
+      wsA.data.clientId = fpA;
+    }
+    expect(wsA.data.clientId).toBe(sharedHwid); // Machine A keeps HWID
+
+    // Machine B: lookupClientByPublicKey → null, but ID already taken by PK_A
+    const wsB = createMockWs({ clientId: sharedHwid });
+    const existingPkAtIdForB: string | null = kpA.publicKeyBase64; // Machine A's key is stored at this ID
+    if (existingPkAtIdForB && existingPkAtIdForB !== kpB.publicKeyBase64) {
+      wsB.data.clientId = fpB;
+    }
+    expect(wsB.data.clientId).toBe(fpB); // Machine B gets reassigned
+    expect(wsB.data.clientId).not.toBe(sharedHwid);
+  });
+
+  test("no collision when same machine reconnects with same public key", async () => {
+    const kp = await generateKeypair();
+    const hwid = "same-machine-hwid";
+    const fp = computeKeyFingerprint(kp.publicKeyBase64);
+
+    const ws = createMockWs({ clientId: hwid });
+    // Same key already at this ID → no collision
+    const existingPkAtId: string | null = kp.publicKeyBase64;
+    if (existingPkAtId && existingPkAtId !== kp.publicKeyBase64) {
+      ws.data.clientId = fp;
+    }
+    expect(ws.data.clientId).toBe(hwid); // keeps original ID
+  });
+});

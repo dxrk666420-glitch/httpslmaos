@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import geoip from "geoip-lite";
 import { logAudit, AuditAction } from "../../auditLog";
 import * as clientManager from "../../clientManager";
-import { clientExists, setOnlineState, upsertClientRow, getClientEnrollmentStatus, setClientEnrollmentStatus, lookupClientByPublicKey } from "../../db";
+import { clientExists, setOnlineState, upsertClientRow, getClientEnrollmentStatus, setClientEnrollmentStatus, lookupClientByPublicKey, getClientPublicKeyById } from "../../db";
 import { getConfig } from "../../config";
 import { logger } from "../../logger";
 import { metrics } from "../../metrics";
@@ -251,6 +251,12 @@ export async function handleWebSocketMessage(
           ws.data.clientId = existing.id;
         } else {
           enrollmentStatus = requireApproval ? "pending" : "approved";
+
+          const existingPk = getClientPublicKeyById(ws.data.clientId);
+          if (existingPk && existingPk !== publicKey) {
+            ws.data.clientId = keyFingerprint;
+            logger.info(`[purgatory] ID collision detected — reassigned to ${keyFingerprint}`);
+          }
         }
 
         const resolvedId = ws.data.clientId;

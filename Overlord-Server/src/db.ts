@@ -662,6 +662,11 @@ export function clientExists(id: string): boolean {
   return !!row?.id;
 }
 
+export function getClientPublicKeyById(id: string): string | null {
+  const row = db.query<{ public_key: string | null }>(`SELECT public_key FROM clients WHERE id=? LIMIT 1`).get(id);
+  return row?.public_key ?? null;
+}
+
 export function listDistinctCountries(): { code: string; count: number }[] {
   const rows = db
     .query<{ code: string; count: number }>(
