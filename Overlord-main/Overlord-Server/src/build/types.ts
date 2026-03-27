@@ -35,6 +35,7 @@ export type BuildConfig = {
   iconBase64?: string;
   enableUpx?: boolean;
   upxStripHeaders?: boolean;
+  enableDonut?: boolean;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
