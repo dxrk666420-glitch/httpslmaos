@@ -94,19 +94,68 @@ type BuildProcessConfig = {
 };
 
 async function checkDonutAvailable(sendToStream: (data: any) => void): Promise<string | null> {
+  // 1. Honour explicit override
   const envBin = process.env.DONUT_BIN?.trim();
-  const candidates = envBin ? [envBin, "donut"] : ["donut"];
+  if (envBin && fs.existsSync(envBin)) {
+    sendToStream({ type: "output", text: `Donut found: ${envBin} (DONUT_BIN)\n`, level: "info" });
+    return envBin;
+  }
 
-  for (const bin of candidates) {
+  // 2. Check system PATH
+  try {
+    await $`donut`.quiet().nothrow();
+    sendToStream({ type: "output", text: `Donut found in PATH\n`, level: "info" });
+    return "donut";
+  } catch {}
+
+  // 3. Check for a previously built binary in the data/tools dir
+  const toolsDir = path.join(ensureDataDir(), "tools");
+  const localDonut = path.join(toolsDir, process.platform === "win32" ? "donut.exe" : "donut");
+  if (fs.existsSync(localDonut)) {
+    sendToStream({ type: "output", text: `Donut found: ${localDonut}\n`, level: "info" });
+    return localDonut;
+  }
+
+  // 4. On Linux, auto-build donut from source (requires git, make, gcc)
+  if (process.platform === "linux") {
+    sendToStream({ type: "output", text: "Donut not found — attempting to build from source...\n", level: "info" });
     try {
-      // .nothrow() suppresses non-zero exits; an exception means the binary wasn't found
-      await $`${bin}`.quiet().nothrow();
-      sendToStream({ type: "output", text: `Donut found: ${bin}\n`, level: "info" });
-      return bin;
-    } catch {
-      // spawn error (ENOENT) — binary not present, try next candidate
+      fs.mkdirSync(toolsDir, { recursive: true });
+      const srcDir = path.join(toolsDir, "donut-src");
+
+      if (!fs.existsSync(path.join(srcDir, "Makefile"))) {
+        sendToStream({ type: "output", text: "Cloning thewover/donut...\n", level: "info" });
+        const cloneResult = await $`git clone --depth 1 https://github.com/thewover/donut.git ${srcDir}`.quiet().nothrow();
+        if (cloneResult.exitCode !== 0) {
+          const err = (cloneResult.stderr.toString() || cloneResult.stdout.toString()).trim();
+          sendToStream({ type: "output", text: `WARNING: Failed to clone Donut: ${err}\n`, level: "warn" });
+          return null;
+        }
+      }
+
+      sendToStream({ type: "output", text: "Building Donut (make)...\n", level: "info" });
+      const makeResult = await $`make`.cwd(srcDir).nothrow().quiet();
+      if (makeResult.exitCode !== 0) {
+        const err = (makeResult.stderr.toString() || makeResult.stdout.toString()).trim();
+        sendToStream({ type: "output", text: `WARNING: Failed to build Donut: ${err}\n`, level: "warn" });
+        return null;
+      }
+
+      const builtBin = path.join(srcDir, "donut");
+      if (!fs.existsSync(builtBin)) {
+        sendToStream({ type: "output", text: "WARNING: Donut build succeeded but binary not found\n", level: "warn" });
+        return null;
+      }
+
+      fs.copyFileSync(builtBin, localDonut);
+      fs.chmodSync(localDonut, 0o755);
+      sendToStream({ type: "output", text: `Donut built and cached: ${localDonut}\n`, level: "info" });
+      return localDonut;
+    } catch (buildErr: any) {
+      sendToStream({ type: "output", text: `WARNING: Donut auto-build failed: ${buildErr.message || buildErr}\n`, level: "warn" });
     }
   }
+
   return null;
 }
 
