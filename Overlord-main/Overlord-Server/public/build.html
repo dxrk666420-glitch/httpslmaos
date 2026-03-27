@@ -282,6 +282,37 @@
                       </div>
                     </label>
 
+                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-amber-500 transition-colors">
+                      <input type="checkbox" name="enable-typhon" class="w-4 h-4" />
+                      <div class="flex flex-col">
+                        <span class="flex items-center gap-2">
+                          <i class="fa-solid fa-syringe text-amber-400"></i> Typhon Injection Loader
+                        </span>
+                        <span class="text-xs text-slate-500">Wrap shellcode in a standalone PoolParty process injector — x64 Windows only, auto-enables Donut</span>
+                      </div>
+                    </label>
+
+                    <div id="typhon-settings-container" class="hidden pl-3 border-l-2 border-amber-500/40">
+                      <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1" for="typhon-variant">Injection Variant</label>
+                        <select id="typhon-variant" name="typhon-variant"
+                          class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-amber-500 transition-colors">
+                          <option value="1" selected>V1 — Worker Factory (recommended)</option>
+                          <option value="2">V2 — I/O Completion Callback</option>
+                          <option value="3">V3 — Timer Callback</option>
+                          <option value="4">V4 — ALPC Callback</option>
+                          <option value="5">V5 — Job Notification</option>
+                          <option value="6">V6 — Direct Callback</option>
+                          <option value="7">V7 — Wait Callback</option>
+                          <option value="8">V8 — Timer (delayed execution)</option>
+                          <option value="all">All Variants</option>
+                          <option value="safe">Safe Variants (CFG/XFG compatible)</option>
+                          <option value="rec">Recommended (auto-select)</option>
+                        </select>
+                        <p class="text-xs text-slate-500 mt-1">PoolParty thread pool injection variant. V1 bypasses CFG/XFG and is recommended for most targets.</p>
+                      </div>
+                    </div>
+
                     <div class="flex flex-col gap-1">
                       <label class="block text-xs font-medium text-slate-400 mb-1" for="sleep-seconds">
                         <i class="fa-solid fa-hourglass-half text-yellow-400"></i> Startup Sleep (seconds)

