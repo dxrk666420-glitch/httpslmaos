@@ -68,6 +68,8 @@ const STATIC_PAGES: StaticPageDef[] = [
   { path: "/settings",           file: "settings.html",            access: "any",              checkPasswordChange: true },
   { path: "/logs",               file: "logs.html",                access: "any",              checkPasswordChange: true, permission: "audit:view" },
   { path: "/notifications",      file: "notifications.html",       access: "admin-or-operator", checkPasswordChange: true },
+  { path: "/vault",              file: "vault.html",               access: "admin-or-operator", checkPasswordChange: true },
+  { path: "/rootkit",            file: "rootkit.html",             access: "admin-or-operator", checkPasswordChange: true },
   { path: "/users",              file: "users.html",               access: "admin",            checkPasswordChange: true },
   { path: "/user-client-access", file: "user-client-access.html",  access: "admin",            checkPasswordChange: true },
   { path: "/build",              file: "build.html",               access: "admin-or-operator" },

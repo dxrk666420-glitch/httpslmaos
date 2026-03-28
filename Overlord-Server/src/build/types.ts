@@ -46,7 +46,10 @@ export type BuildConfig = {
   jarModId?: string;
   enableR77?: boolean;
   enableChaos?: boolean;
+  chaosMode?: string;
+  typhonProcess?: string;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
+  boundFiles?: any[];
 };
