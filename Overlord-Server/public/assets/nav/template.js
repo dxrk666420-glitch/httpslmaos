@@ -72,6 +72,18 @@ export function mountNav(host) {
           ><i class="fa-solid fa-bell text-yellow-400"></i> Notifications</a
         >
         <a
+          href="/vault"
+          id="vault-link"
+          class="hidden inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/70 border border-slate-800 hover:bg-slate-800 text-slate-300 transition-colors"
+          ><i class="fa-solid fa-lock text-violet-400"></i> Vault</a
+        >
+        <a
+          href="/rootkit"
+          id="rootkit-link"
+          class="hidden inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/70 border border-slate-800 hover:bg-slate-800 text-slate-300 transition-colors"
+          ><i class="fa-solid fa-skull text-red-400"></i> Rootkit</a
+        >
+        <a
           href="/users"
           id="users-link"
           class="hidden inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/70 border border-slate-800 hover:bg-slate-800 text-slate-300 transition-colors"
@@ -141,6 +153,8 @@ export function mountNav(host) {
     scriptsLink: document.getElementById("scripts-link"),
     logsLink: document.getElementById("logs-link"),
     notificationsLink: document.getElementById("notifications-link"),
+    vaultLink: document.getElementById("vault-link"),
+    rootkitLink: document.getElementById("rootkit-link"),
     enrollmentLink: document.getElementById("enrollment-link"),
     enrollmentBadge: document.getElementById("enrollment-badge"),
   };

