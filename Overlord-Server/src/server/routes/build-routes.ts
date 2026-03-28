@@ -267,7 +267,7 @@ export async function handleBuildRoutes(
         enableJar: !!enableJar,
         jarMcVersion: typeof jarMcVersion === "string" && /^\d+\.\d+(\.\d+)?$/.test(jarMcVersion.trim())
           ? jarMcVersion.trim()
-          : "1.20.1",
+          : "1.21.4",
         jarModName: typeof jarModName === "string" && jarModName.trim().length > 0
           ? jarModName.trim().slice(0, 64)
           : undefined,
