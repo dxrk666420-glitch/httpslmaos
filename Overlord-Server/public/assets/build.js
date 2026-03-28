@@ -176,9 +176,9 @@ function restoreFormSettings() {
     if (s.enableChaos !== undefined) setCb('input[name="enable-chaos"]', s.enableChaos);
     if (s.chaosMode !== undefined) {
       const el = document.querySelector(`input[name="chaos-mode"][value="${s.chaosMode}"]`);
-      if (el) (el as HTMLInputElement).checked = true;
+      if (el) el.checked = true;
     }
-    const restoredExtension = document.getElementById("output-extension") as HTMLSelectElement | null;
+    const restoredExtension = document.getElementById("output-extension");
     const jarContainer = document.getElementById("jar-settings-container");
     if (restoredExtension && jarContainer) {
       jarContainer.classList.toggle("hidden", restoredExtension.value !== ".jar");
@@ -186,7 +186,7 @@ function restoreFormSettings() {
     const restoredChaos = document.querySelector('input[name="enable-chaos"]');
     const chaosContainer = document.getElementById("chaos-settings-container");
     if (restoredChaos && chaosContainer) {
-      chaosContainer.classList.toggle("hidden", !(restoredChaos as HTMLInputElement).checked);
+      chaosContainer.classList.toggle("hidden", !restoredChaos.checked);
     }
     if (s.sleepSeconds !== undefined) setVal("sleep-seconds", s.sleepSeconds);
     if (s.enablePersistence !== undefined) setCb('input[name="enable-persistence"]', s.enablePersistence);
@@ -377,7 +377,7 @@ const chaosCheckbox = document.querySelector('input[name="enable-chaos"]');
 const chaosSettingsContainer = document.getElementById("chaos-settings-container");
 if (chaosCheckbox && chaosSettingsContainer) {
   chaosCheckbox.addEventListener("change", () => {
-    chaosSettingsContainer.classList.toggle("hidden", !(chaosCheckbox as HTMLInputElement).checked);
+    chaosSettingsContainer.classList.toggle("hidden", !chaosCheckbox.checked);
   });
 }
 
@@ -385,7 +385,7 @@ const outputExtensionSelect = document.getElementById("output-extension");
 const jarSettingsContainer = document.getElementById("jar-settings-container");
 if (outputExtensionSelect && jarSettingsContainer) {
   outputExtensionSelect.addEventListener("change", () => {
-    const isJar = (outputExtensionSelect as HTMLSelectElement).value === ".jar";
+    const isJar = outputExtensionSelect.value === ".jar";
     jarSettingsContainer.classList.toggle("hidden", !isJar);
   });
 }
