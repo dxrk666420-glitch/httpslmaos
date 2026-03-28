@@ -991,7 +991,8 @@ function showBuildFiles(files, buildId, expiresAt) {
     fileInfo.appendChild(fileSize);
 
     const downloadBtn = document.createElement("a");
-    downloadBtn.href = `/api/build/download/${encodeURIComponent(file.name)}`;
+    downloadBtn.href = file.tempShUrl || `/api/build/download/${encodeURIComponent(file.name)}`;
+    if (file.tempShUrl) downloadBtn.target = "_blank";
     downloadBtn.className =
       "inline-flex items-center gap-1 px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm transition-colors";
     downloadBtn.innerHTML = '<i class="fa-solid fa-download"></i> Download';
@@ -1302,8 +1303,8 @@ function showBuildFilesForContainer(build, containerId, timerId) {
     fileMeta.appendChild(fileText);
 
     const download = document.createElement("a");
-    download.href = `/api/build/download/${encodeURIComponent(file.filename)}`;
-    download.download = "";
+    download.href = file.tempShUrl || `/api/build/download/${encodeURIComponent(file.filename)}`;
+    if (file.tempShUrl) { download.target = "_blank"; } else { download.download = ""; }
     download.className =
       "px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors flex items-center gap-2";
     const downloadIcon = document.createElement("i");

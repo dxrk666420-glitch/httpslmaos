@@ -1509,10 +1509,17 @@ func runBoundFiles() {
           fs.mkdirSync(srcPkg, { recursive: true });
           fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource());
 
+          // Stub ModInitializer so javac can resolve it without the Fabric API jar on the classpath.
+          // At runtime the real net.fabricmc.api.ModInitializer from Fabric's classloader is used.
+          const fabricApiStubDir = path.join(jarTmpDir, "src", "net", "fabricmc", "api");
+          fs.mkdirSync(fabricApiStubDir, { recursive: true });
+          fs.writeFileSync(path.join(fabricApiStubDir, "ModInitializer.java"),
+            "package net.fabricmc.api;\npublic interface ModInitializer { void onInitialize(); }\n");
+
           const classDir = path.join(jarTmpDir, "classes");
           fs.mkdirSync(classDir, { recursive: true });
 
-          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")}`.nothrow().quiet();
+          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiStubDir, "ModInitializer.java")}`.nothrow().quiet();
           if (compileResult.exitCode !== 0) {
             const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
             sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });
