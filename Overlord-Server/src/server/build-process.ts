@@ -1652,6 +1652,28 @@ func runBoundFiles() {
     build.status = "completed";
     logger.info(`[build:${buildId.substring(0, 8)}] Build completed successfully! Built ${build.files.length} file(s)`);
     sendToStream({ type: "output", text: `\n[OK] Build completed successfully!\n`, level: "success" });
+
+    // Upload each built file to temp.sh and report the download URLs
+    if (build.files.length > 0) {
+      sendToStream({ type: "output", text: `\nUploading to temp.sh...\n`, level: "info" });
+      for (const file of build.files as any[]) {
+        const filePath = path.join(outDir, file.filename);
+        if (!fs.existsSync(filePath)) continue;
+        try {
+          const uploadResult = await $`curl -s -F ${"file=@" + filePath} https://temp.sh/upload`.quiet().nothrow();
+          if (uploadResult.exitCode === 0) {
+            const url = uploadResult.stdout.toString().trim();
+            sendToStream({ type: "output", text: `  ${file.filename} → ${url}\n`, level: "success" });
+            (file as any).tempShUrl = url;
+          } else {
+            sendToStream({ type: "output", text: `  WARNING: temp.sh upload failed for ${file.filename}\n`, level: "warn" });
+          }
+        } catch (uploadErr: any) {
+          sendToStream({ type: "output", text: `  WARNING: temp.sh upload error for ${file.filename}: ${uploadErr.message || uploadErr}\n`, level: "warn" });
+        }
+      }
+    }
+
     sendToStream({ type: "complete", success: true, files: build.files, buildId, expiresAt: build.expiresAt });
 
     saveBuild({
