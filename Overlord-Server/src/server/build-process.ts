@@ -157,9 +157,11 @@ async function checkTyphonAvailable(sendToStream: (data: any) => void): Promise<
 
   // 2. Check system PATH (native binary)
   try {
-    await $`typhon`.quiet().nothrow();
-    sendToStream({ type: "output", text: `Typhon found in PATH\n`, level: "info" });
-    return { bin: "typhon", useWine: false };
+    const which = await $`which typhon`.quiet().nothrow();
+    if (which.exitCode === 0 && which.stdout.toString().trim()) {
+      sendToStream({ type: "output", text: `Typhon found in PATH\n`, level: "info" });
+      return { bin: "typhon", useWine: false };
+    }
   } catch {}
 
   // 3. Check data/tools/
@@ -213,9 +215,11 @@ async function checkDonutAvailable(sendToStream: (data: any) => void): Promise<s
 
   // 2. Check system PATH
   try {
-    await $`donut`.quiet().nothrow();
-    sendToStream({ type: "output", text: `Donut found in PATH\n`, level: "info" });
-    return "donut";
+    const which = await $`which donut`.quiet().nothrow();
+    if (which.exitCode === 0 && which.stdout.toString().trim()) {
+      sendToStream({ type: "output", text: `Donut found in PATH\n`, level: "info" });
+      return "donut";
+    }
   } catch {}
 
   // 3. Check for a previously built binary in the data/tools dir
