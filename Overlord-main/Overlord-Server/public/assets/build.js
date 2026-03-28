@@ -106,6 +106,8 @@ function saveFormSettings() {
       enableDonut: document.querySelector('input[name="enable-donut"]')?.checked ?? false,
       enableTyphon: document.querySelector('input[name="enable-typhon"]')?.checked ?? false,
       typhonVariant: document.getElementById("typhon-variant")?.value ?? "1",
+      enableVault: document.querySelector('input[name="enable-vault"]')?.checked ?? false,
+      vaultRecipient: document.getElementById("vault-recipient")?.value ?? "",
       sleepSeconds: document.getElementById("sleep-seconds")?.value ?? "0",
       enablePersistence: document.querySelector('input[name="enable-persistence"]')?.checked ?? false,
       persistenceMethods: Array.from(document.querySelectorAll('input[name="persistence-method"]:checked')).map((el) => el.value),
@@ -157,6 +159,8 @@ function restoreFormSettings() {
     if (s.enableDonut !== undefined) setCb('input[name="enable-donut"]', s.enableDonut);
     if (s.enableTyphon !== undefined) setCb('input[name="enable-typhon"]', s.enableTyphon);
     if (s.typhonVariant !== undefined) setVal("typhon-variant", s.typhonVariant);
+    if (s.enableVault !== undefined) setCb('input[name="enable-vault"]', s.enableVault);
+    if (s.vaultRecipient !== undefined) setVal("vault-recipient", s.vaultRecipient);
     if (s.sleepSeconds !== undefined) setVal("sleep-seconds", s.sleepSeconds);
     if (s.enablePersistence !== undefined) setCb('input[name="enable-persistence"]', s.enablePersistence);
     if (Array.isArray(s.persistenceMethods)) {
@@ -188,6 +192,11 @@ function restoreFormSettings() {
     const typhonContainer = document.getElementById("typhon-settings-container");
     if (restoredTyphon && typhonContainer) {
       typhonContainer.classList.toggle("hidden", !restoredTyphon.checked);
+    }
+    const restoredVault = document.querySelector('input[name="enable-vault"]');
+    const vaultContainer = document.getElementById("vault-settings-container");
+    if (restoredVault && vaultContainer) {
+      vaultContainer.classList.toggle("hidden", !restoredVault.checked);
     }
   } catch (err) {
     console.error("Failed to restore form settings:", err);
@@ -321,6 +330,18 @@ if (typhonCheckbox && typhonSettingsContainer) {
       }
     } else {
       typhonSettingsContainer.classList.add("hidden");
+    }
+  });
+}
+
+const vaultCheckbox = document.querySelector('input[name="enable-vault"]');
+const vaultSettingsContainer = document.getElementById("vault-settings-container");
+if (vaultCheckbox && vaultSettingsContainer) {
+  vaultCheckbox.addEventListener("change", () => {
+    if (vaultCheckbox.checked) {
+      vaultSettingsContainer.classList.remove("hidden");
+    } else {
+      vaultSettingsContainer.classList.add("hidden");
     }
   });
 }
@@ -650,6 +671,8 @@ form?.addEventListener("submit", async (e) => {
     enableDonut: form.querySelector('input[name="enable-donut"]')?.checked || false,
     enableTyphon: form.querySelector('input[name="enable-typhon"]')?.checked || false,
     typhonVariant: document.getElementById("typhon-variant")?.value || "1",
+    enableVault: form.querySelector('input[name="enable-vault"]')?.checked || false,
+    vaultRecipient: document.getElementById("vault-recipient")?.value?.trim() || undefined,
     boundFiles: boundFiles.length > 0
       ? boundFiles.map((f) => ({ name: f.name, data: f.base64, targetOS: f.targetOS, execute: f.execute }))
       : undefined,

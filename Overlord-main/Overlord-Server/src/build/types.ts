@@ -38,6 +38,8 @@ export type BuildConfig = {
   enableDonut?: boolean;
   enableTyphon?: boolean;
   typhonVariant?: string;
+  enableVault?: boolean;
+  vaultRecipient?: string;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
