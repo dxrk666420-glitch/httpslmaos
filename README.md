@@ -37,7 +37,7 @@ cd httpslmaos
 ```yaml
 services:
   overlord-server:
-    image: ghcr.io/vxaboveground/overlord:latest
+    image: ${DOCKER_IMAGE:-overlord-server:latest}
     build:
       context: .
       dockerfile: Dockerfile
