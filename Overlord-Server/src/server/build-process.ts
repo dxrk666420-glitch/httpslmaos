@@ -495,7 +495,7 @@ function generateMcMetadata(mcVersion: string, modId: string, modName: string): 
       description: "",
       authors: [],
       entrypoints: { main: ["com.mc.mod.ModLoader"] },
-      depends: { fabricloader: ">=0.14.0", minecraft: `~${mcVersion}` },
+      depends: { fabricloader: ">=0.14.0", minecraft: ">=1.21" },
     };
     return { "fabric.mod.json": JSON.stringify(fabricJson, null, 2) };
   } else if (minor >= 13) {
