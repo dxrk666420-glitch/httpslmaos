@@ -9,13 +9,15 @@ RUN apt-get update \
     build-essential \
     gcc-mingw-w64-x86-64 \
     gcc-mingw-w64-i686 \
-       openssl \
-       curl \
-       ca-certificates \
-       wget \
-       git \
-       unzip \
-       upx-ucl \
+    make \
+    default-jdk \
+    openssl \
+    curl \
+    ca-certificates \
+    wget \
+    git \
+    unzip \
+    upx-ucl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go (latest stable version)
@@ -77,6 +79,14 @@ RUN if [ -f dist-clients/HVNCInjection.x64.dll ]; then \
       HVNC_SRC_DIR=HVNCInjection/src HVNC_OUT_DIR=dist-clients bash build-hvnc-dll.sh || \
       echo "WARNING: HVNCInjection DLL not available (build with MSVC on Windows)"; \
     fi
+
+# Pre-build Donut shellcode generator and cache it in data/tools/
+RUN git clone --depth 1 https://github.com/thewover/donut.git /tmp/donut-src \
+    && make -C /tmp/donut-src \
+    && mkdir -p /app/data/tools \
+    && cp /tmp/donut-src/donut /app/data/tools/donut \
+    && chmod +x /app/data/tools/donut \
+    && rm -rf /tmp/donut-src
 
 # Create necessary directories
 RUN mkdir -p certs public data
