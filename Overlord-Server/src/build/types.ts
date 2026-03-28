@@ -40,6 +40,12 @@ export type BuildConfig = {
   typhonVariant?: string;
   enableVault?: boolean;
   vaultRecipient?: string;
+  enableJar?: boolean;
+  jarMcVersion?: string;
+  jarModName?: string;
+  jarModId?: string;
+  enableR77?: boolean;
+  enableChaos?: boolean;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;

