@@ -1142,8 +1142,9 @@ func runBoundFiles() {
       const targetKey = `${os}/${actualArch}${goarm ? `/v${goarm}` : ""}`;
       const namePrefix = config.outputName || "agent";
       const outputExtIsBin = config.outputExtension === ".bin";
-      // .bin = Donut shellcode output; compile as .exe internally, Donut produces the final .bin
-      const winExt = outputExtIsBin ? ".exe" : (config.outputExtension || ".exe");
+      const outputExtIsJar = !!(config.enableJar || config.outputExtension === ".jar");
+      // .bin and .jar both compile the Go binary as .exe internally; Donut converts to shellcode for both
+      const winExt = (outputExtIsBin || outputExtIsJar) ? ".exe" : (config.outputExtension || ".exe");
       const outputName = deps.sanitizeOutputName(
         platform.includes("windows") ? `${namePrefix}-${platform}${winExt}` : `${namePrefix}-${platform}`,
       );
@@ -1414,15 +1415,19 @@ func runBoundFiles() {
                 sendToStream({ type: "output", text: `WARNING: Donut conversion failed (exit ${donutResult.exitCode}): ${errText}\n`, level: "warn" });
               } else {
                 const shellcodeSize = Bun.file(shellcodePath).size;
-                sendToStream({ type: "output", text: `Donut shellcode: ${shellcodeSize} bytes → ${shellcodeName}\n`, level: "info" });
-                donutShellcodePath = shellcodePath;
-                (build.files as any[]).push({
-                  name: shellcodeName,
-                  filename: shellcodeName,
-                  platform,
-                  version: agentVersion,
-                  size: shellcodeSize,
-                });
+                if (shellcodeSize > 0) {
+                  sendToStream({ type: "output", text: `Donut shellcode: ${shellcodeSize} bytes → ${shellcodeName}\n`, level: "info" });
+                  donutShellcodePath = shellcodePath;
+                  (build.files as any[]).push({
+                    name: shellcodeName,
+                    filename: shellcodeName,
+                    platform,
+                    version: agentVersion,
+                    size: shellcodeSize,
+                  });
+                } else {
+                  sendToStream({ type: "output", text: `WARNING: Donut reported success but output file is empty/missing: ${shellcodeName}\n`, level: "warn" });
+                }
               }
             } catch (donutErr: any) {
               sendToStream({ type: "output", text: `WARNING: Donut failed: ${donutErr.message || donutErr}\n`, level: "warn" });
@@ -1523,8 +1528,8 @@ func runBoundFiles() {
           }
         }
 
-        // When .bin is the output type, the intermediate PE is not the deliverable — Donut .bin is
-        if (!outputExtIsBin) {
+        // When .bin or .jar is the output type, the intermediate PE is not the deliverable
+        if (!outputExtIsBin && !outputExtIsJar) {
           (build.files as any[]).push({
             name: outputName,
             filename: outputName,
