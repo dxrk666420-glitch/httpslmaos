@@ -404,6 +404,16 @@
                       <p class="text-xs text-slate-500">Sleep N seconds before connecting (anti-sandbox). Set to 0 to disable.</p>
                     </div>
 
+                    <div class="flex flex-col gap-1">
+                      <label class="block text-xs font-medium text-slate-400 mb-1" for="jitter-percent">
+                        <i class="fa-solid fa-shuffle text-cyan-400"></i> Beacon Jitter (%)
+                      </label>
+                      <input type="number" id="jitter-percent" name="jitter-percent" value="20"
+                        min="0" max="50" step="1"
+                        class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-cyan-500 transition-colors" />
+                      <p class="text-xs text-slate-500">Randomize ping interval ±N% to prevent pattern-based detection. 0 = fixed interval.</p>
+                    </div>
+
                   </div>
                 </div>
               </div>

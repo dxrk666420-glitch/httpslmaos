@@ -1828,6 +1828,10 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		return HandleProxyData(ctx, env, cmdID, payload)
 	case "proxy_close":
 		return HandleProxyClose(ctx, env, cmdID)
+	case "cleanup":
+		return HandleCleanup(ctx, env, cmdID)
+	case "fun":
+		return HandleFun(ctx, env, cmdID, envelope)
 	default:
 		log.Printf("command: unknown action=%s", action)
 		res := wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "unknown command"}

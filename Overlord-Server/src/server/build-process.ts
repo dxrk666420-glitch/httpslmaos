@@ -103,6 +103,7 @@ type BuildProcessConfig = {
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
+  jitterPercent?: number;
   boundFiles?: BoundFile[];
 };
 
@@ -1263,6 +1264,12 @@ func runBoundFiles() {
         const sleepFlag = `-X overlord-client/cmd/agent/config.DefaultSleepSeconds=${config.sleepSeconds}`;
         ldflags = ldflags ? `${ldflags} ${sleepFlag}` : sleepFlag;
         sendToStream({ type: "output", text: `Startup sleep: ${config.sleepSeconds}s\n`, level: "info" });
+      }
+
+      if (typeof config.jitterPercent === "number" && config.jitterPercent >= 0 && config.jitterPercent <= 50) {
+        const jitterFlag = `-X overlord-client/cmd/agent/config.DefaultJitterPercent=${config.jitterPercent}`;
+        ldflags = ldflags ? `${ldflags} ${jitterFlag}` : jitterFlag;
+        sendToStream({ type: "output", text: `Beacon jitter: ±${config.jitterPercent}%\n`, level: "info" });
       }
 
       if (config.hideConsole && os === "windows") {

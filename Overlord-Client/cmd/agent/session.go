@@ -368,6 +368,23 @@ func getEnrollmentRetryInterval() time.Duration {
 	return 30 * time.Second
 }
 
+func jitteredDelay(base time.Duration, jitterPct int) time.Duration {
+	if jitterPct <= 0 {
+		return base
+	}
+	if jitterPct > 50 {
+		jitterPct = 50
+	}
+	jitter := base * time.Duration(jitterPct) / 100
+	// random in [-jitter, +jitter]
+	offset := time.Duration(rand.Int63n(int64(jitter*2+1))) - jitter
+	result := base + offset
+	if result < time.Second {
+		result = time.Second
+	}
+	return result
+}
+
 func getPingInterval() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("OVERLORD_PING_INTERVAL_MS"))
 	if raw == "" {
@@ -529,15 +546,15 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 	}
 
 	if interval := getPingInterval(); interval > 0 {
-		log.Printf("ping: heartbeat interval=%s", interval)
+		jitterPct := cfg.JitterPercent
+		log.Printf("ping: heartbeat interval=%s jitter=%d%%", interval, jitterPct)
 		goSafe("ping loop", cancel, func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
 			for {
+				delay := jitteredDelay(interval, jitterPct)
 				select {
 				case <-ctx.Done():
 					return
-				case <-ticker.C:
+				case <-time.After(delay):
 					ping := wire.Ping{Type: "ping", TS: time.Now().UnixMilli()}
 					if err := wire.WriteMsg(ctx, env.Conn, ping); err != nil {
 						log.Printf("ping: failed to send: %v", err)

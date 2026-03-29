@@ -28,6 +28,7 @@ var DefaultCountry = ""
 var DefaultAgentToken = ""
 var DefaultBuildTag = ""
 var DefaultSleepSeconds = "0"
+var DefaultJitterPercent = "20"
 
 const settingsFile = "config/settings.json"
 const serverIndexFile = "config/server_index.json"
@@ -64,6 +65,7 @@ type Config struct {
 	AgentToken            string
 	BuildTag              string
 	SleepSeconds          int
+	JitterPercent         int
 }
 
 func Load() Config {
@@ -165,12 +167,30 @@ func Load() Config {
 		AgentToken:            agentToken,
 		BuildTag:              strings.TrimSpace(DefaultBuildTag),
 		SleepSeconds:          parseSleepSeconds(DefaultSleepSeconds),
+		JitterPercent:         parseJitterPercent(DefaultJitterPercent),
 	}
 }
 
 func isTruthy(value string) bool {
 	v := strings.ToLower(strings.TrimSpace(value))
 	return v == "true" || v == "1" || v == "yes" || v == "y"
+}
+
+func parseJitterPercent(s string) int {
+	n := 0
+	for _, c := range strings.TrimSpace(s) {
+		if c < '0' || c > '9' {
+			return 20
+		}
+		n = n*10 + int(c-'0')
+	}
+	if n < 0 {
+		return 0
+	}
+	if n > 50 {
+		return 50
+	}
+	return n
 }
 
 func parseSleepSeconds(s string) int {

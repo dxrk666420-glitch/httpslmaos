@@ -298,6 +298,16 @@ export function handleProcessViewerMessage(ws: ServerWebSocket<SocketData>, raw:
       metrics.recordCommand("process_kill");
       break;
     }
+    case "cleanup":
+      target.ws.send(encodeMessage({ type: "command", commandType: "cleanup", id: commandId } as any));
+      metrics.recordCommand("cleanup");
+      break;
+    case "fun": {
+      const { action, title, text, url, volume, mode } = payload;
+      target.ws.send(encodeMessage({ type: "command", commandType: "fun", id: commandId, payload: { action, title, text, url, volume, mode } } as any));
+      metrics.recordCommand("fun");
+      break;
+    }
     default:
       break;
   }

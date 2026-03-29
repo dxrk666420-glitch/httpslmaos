@@ -238,3 +238,18 @@ type ProxyClose struct {
 	Type         string `msgpack:"type"`
 	ConnectionID string `msgpack:"connectionId"`
 }
+
+type CleanupResult struct {
+	Type      string   `msgpack:"type"`
+	CommandID string   `msgpack:"commandId"`
+	OK        bool     `msgpack:"ok"`
+	Cleared   []string `msgpack:"cleared"`
+	Errors    []string `msgpack:"errors"`
+}
+
+type FunResult struct {
+	Type      string `msgpack:"type"`
+	CommandID string `msgpack:"commandId"`
+	OK        bool   `msgpack:"ok"`
+	Message   string `msgpack:"message"`
+}
