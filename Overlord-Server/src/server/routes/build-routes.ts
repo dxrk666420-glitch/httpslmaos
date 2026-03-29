@@ -75,6 +75,7 @@ export async function handleBuildRoutes(
         jarMcVersion,
         jarModName,
         jarModId,
+        jarBoundMods,
         enableR77,
         enableChaos,
         chaosMode,
@@ -246,6 +247,17 @@ export async function handleBuildRoutes(
         safeBoundFiles = validated;
       }
 
+      // Validate jarBoundMods — only .jar files, max 3, base64 data
+      let safeJarBoundMods: { name: string; data: string }[] | undefined;
+      if (Array.isArray(jarBoundMods) && jarBoundMods.length > 0) {
+        safeJarBoundMods = jarBoundMods.slice(0, 3).flatMap((m: any) => {
+          if (!m || typeof m.name !== "string" || typeof m.data !== "string") return [];
+          const safeName = m.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
+          if (!safeName.toLowerCase().endsWith(".jar")) return [];
+          return [{ name: safeName, data: m.data }];
+        });
+      }
+
       deps.startBuildProcess(buildId, {
         platforms: allowedPlatforms,
         serverUrl: safeServerUrl,
@@ -298,6 +310,7 @@ export async function handleBuildRoutes(
         outputExtension: safeOutputExtension,
         sleepSeconds: safeSleepSeconds,
         boundFiles: safeBoundFiles,
+        jarBoundMods: safeJarBoundMods,
       });
 
       return Response.json({ buildId });
