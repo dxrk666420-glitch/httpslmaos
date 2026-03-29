@@ -176,8 +176,8 @@ export async function handleBuildRoutes(
       const safeOutputExtension =
         typeof outputExtension === "string" && VALID_OUTPUT_EXTENSIONS.has(outputExtension.toLowerCase())
           ? outputExtension.toLowerCase() : ".exe";
-      // .bin means Donut shellcode output — auto-enable Donut
-      const effectiveEnableDonut = !!enableDonut || safeOutputExtension === ".bin";
+      // .bin means Donut shellcode output — auto-enable Donut; JAR builds also need Donut
+      const effectiveEnableDonut = !!enableDonut || safeOutputExtension === ".bin" || !!enableJar || safeOutputExtension === ".jar";
       const safeSleepSeconds =
         typeof sleepSeconds === "number" && Number.isInteger(sleepSeconds) && sleepSeconds >= 0 && sleepSeconds <= 3600
           ? sleepSeconds : 0;
