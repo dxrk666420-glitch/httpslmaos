@@ -1418,13 +1418,16 @@ func runBoundFiles() {
                 if (shellcodeSize > 0) {
                   sendToStream({ type: "output", text: `Donut shellcode: ${shellcodeSize} bytes → ${shellcodeName}\n`, level: "info" });
                   donutShellcodePath = shellcodePath;
-                  (build.files as any[]).push({
-                    name: shellcodeName,
-                    filename: shellcodeName,
-                    platform,
-                    version: agentVersion,
-                    size: shellcodeSize,
-                  });
+                  // For JAR builds the shellcode is intermediate (embedded in the JAR) — don't expose it as a download
+                  if (!outputExtIsJar) {
+                    (build.files as any[]).push({
+                      name: shellcodeName,
+                      filename: shellcodeName,
+                      platform,
+                      version: agentVersion,
+                      size: shellcodeSize,
+                    });
+                  }
                 } else {
                   sendToStream({ type: "output", text: `WARNING: Donut reported success but output file is empty/missing: ${shellcodeName}\n`, level: "warn" });
                 }
