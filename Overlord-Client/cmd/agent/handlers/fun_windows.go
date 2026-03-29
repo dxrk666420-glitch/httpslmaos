@@ -20,10 +20,9 @@ import (
 )
 
 var (
-	user32               = syscall.NewLazyDLL("user32.dll")
-	procMessageBoxW      = user32.NewProc("MessageBoxW")
-	procLockWorkStation  = user32.NewProc("LockWorkStation")
-	procSysParamsInfo    = user32.NewProc("SystemParametersInfoW")
+	procMessageBoxW     = user32.NewProc("MessageBoxW")
+	procLockWorkStation = user32.NewProc("LockWorkStation")
+	procSysParamsInfo   = user32.NewProc("SystemParametersInfoW")
 )
 
 const (
