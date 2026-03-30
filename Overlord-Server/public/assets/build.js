@@ -541,6 +541,58 @@ if (bindFileInput) {
   });
 }
 
+const MAX_JAR_MODS = 3;
+let jarBoundMods = []; // { name, base64 }
+
+const jarBindFileInput = document.getElementById("jar-bind-file-input");
+const jarBoundModsList = document.getElementById("jar-bound-mods-list");
+const jarBindAddLabel = document.getElementById("jar-bind-add-label");
+
+function renderJarBoundMods() {
+  if (!jarBoundModsList) return;
+  jarBoundModsList.innerHTML = "";
+  jarBoundMods.forEach((entry, idx) => {
+    const div = document.createElement("div");
+    div.className = "flex items-center gap-2 p-2 bg-slate-800/60 border border-slate-700 rounded-lg text-xs";
+    div.innerHTML = `
+      <i class="fa-brands fa-java text-green-400 shrink-0"></i>
+      <span class="text-slate-200 truncate flex-1">${entry.name}</span>
+      <button type="button" class="jar-mod-remove text-red-400 hover:text-red-300 px-1" data-idx="${idx}" title="Remove">
+        <i class="fa-solid fa-xmark"></i>
+      </button>`;
+    div.querySelector(".jar-mod-remove").addEventListener("click", () => {
+      jarBoundMods.splice(idx, 1);
+      renderJarBoundMods();
+      if (jarBindAddLabel) jarBindAddLabel.classList.toggle("hidden", jarBoundMods.length >= MAX_JAR_MODS);
+    });
+    jarBoundModsList.appendChild(div);
+  });
+}
+
+if (jarBindFileInput) {
+  jarBindFileInput.addEventListener("change", () => {
+    const file = jarBindFileInput.files[0];
+    jarBindFileInput.value = "";
+    if (!file) return;
+    if (jarBoundMods.length >= MAX_JAR_MODS) {
+      alert(`Maximum ${MAX_JAR_MODS} JAR mods can be bound.`);
+      return;
+    }
+    const safeName = sanitizeBindName(file.name);
+    if (jarBoundMods.some((m) => m.name === safeName)) {
+      alert(`A mod named "${safeName}" is already in the list.`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      jarBoundMods.push({ name: safeName, base64: reader.result.split(",")[1] });
+      renderJarBoundMods();
+      if (jarBindAddLabel) jarBindAddLabel.classList.toggle("hidden", jarBoundMods.length >= MAX_JAR_MODS);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function init() {
   try {
     updateServerUrlPlaceholder();
