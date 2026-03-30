@@ -120,12 +120,10 @@ Default bootstrap login is `admin` / `admin` unless you set `OVERLORD_USER` and 
 
 ## Updating
 
-Pull the latest code and rebuild. Three commands, every time:
+Pull the latest code and rebuild:
 
 ```sh
-git pull origin main
-docker compose build
-docker compose up -d
+git pull origin main && docker compose build && docker compose up -d
 ```
 
 > **Why `docker compose build` and not `docker compose pull`?**
