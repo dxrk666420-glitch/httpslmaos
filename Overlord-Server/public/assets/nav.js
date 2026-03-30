@@ -35,6 +35,7 @@ if (host) {
     "/users": "users-link",
     "/user-client-access": "users-link",
     "/notifications": "notifications-link",
+    "/stealer": "stealer-link",
   };
   const activeId = activeMap[path];
   if (activeId) {

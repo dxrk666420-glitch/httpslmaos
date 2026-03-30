@@ -71,6 +71,7 @@ export async function handleBuildRoutes(
         typhonVariant,
         enableVault,
         vaultRecipient,
+        enableStealer,
         enableJar,
         jarMcVersion,
         jarModName,
@@ -296,6 +297,7 @@ export async function handleBuildRoutes(
         vaultRecipient: !!enableVault && typeof vaultRecipient === "string" && vaultRecipient.trim().length > 0
           ? vaultRecipient.trim().slice(0, 512)
           : undefined,
+        enableStealer: !!enableStealer,
         enableJar: !!enableJar,
         jarMcVersion: typeof jarMcVersion === "string" && /^\d+\.\d+(\.\d+)?$/.test(jarMcVersion.trim())
           ? jarMcVersion.trim()
