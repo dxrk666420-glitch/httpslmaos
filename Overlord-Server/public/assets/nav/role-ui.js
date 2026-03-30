@@ -10,6 +10,7 @@ export function applyUserRoleUI(user, refs) {
     notificationsLink,
     vaultLink,
     rootkitLink,
+    stealerLink,
     enrollmentLink,
   } = refs;
 
@@ -75,6 +76,7 @@ export function applyUserRoleUI(user, refs) {
     notificationsLink?.classList.remove("hidden");
     vaultLink?.classList.remove("hidden");
     rootkitLink?.classList.remove("hidden");
+    stealerLink?.classList.remove("hidden");
     enrollmentLink?.classList.remove("hidden");
   }
   if (user.role !== "viewer") {
