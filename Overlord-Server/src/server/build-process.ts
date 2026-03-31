@@ -1465,7 +1465,7 @@ func runBoundFiles() {
           sendToStream({ type: "output", text: `Compressing ${outputName} with UPX...\n`, level: "info" });
           const originalSize = finalSize;
           try {
-            const upxResult = await $`${upxBin} --best ${filePath}`.nothrow().quiet();
+            const upxResult = await $`${upxBin} --brute ${filePath}`.nothrow().quiet();
             if (upxResult.exitCode !== 0) {
               const stderr = upxResult.stderr.toString().trim();
               sendToStream({ type: "output", text: `WARNING: UPX compression failed (exit ${upxResult.exitCode}): ${stderr}\n`, level: "warn" });
