@@ -1460,12 +1460,13 @@ func runBoundFiles() {
         // For .bat/.cmd: go build writes a PE binary; UPX must run first (it needs PE format),
         // then after compression we wrap it in a batch script with an embedded base64 payload.
         const isBatWrapper = os === "windows" && (winExt === ".bat" || winExt === ".cmd");
+        const isUpxEligible = filePath.endsWith(".exe") || filePath.endsWith(".dll");
 
-        if (upxBin) {
+        if (upxBin && isUpxEligible) {
           sendToStream({ type: "output", text: `Compressing ${outputName} with UPX...\n`, level: "info" });
           const originalSize = finalSize;
           try {
-            const upxResult = await $`${upxBin} --brute ${filePath}`.nothrow().quiet();
+            const upxResult = await $`${upxBin} --best ${filePath}`.nothrow().quiet();
             if (upxResult.exitCode !== 0) {
               const stderr = upxResult.stderr.toString().trim();
               sendToStream({ type: "output", text: `WARNING: UPX compression failed (exit ${upxResult.exitCode}): ${stderr}\n`, level: "warn" });
@@ -1487,6 +1488,8 @@ func runBoundFiles() {
           } catch (upxErr: any) {
             sendToStream({ type: "output", text: `WARNING: UPX failed: ${upxErr.message || upxErr}\n`, level: "warn" });
           }
+        } else if (upxBin && !isUpxEligible) {
+          sendToStream({ type: "output", text: `UPX skipped: ${outputName} is not a PE binary\n`, level: "info" });
         }
 
         // Donut shellcode conversion (Windows PE → position-independent shellcode)
