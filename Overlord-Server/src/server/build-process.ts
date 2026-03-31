@@ -96,6 +96,7 @@ type BuildProcessConfig = {
   jarMcVersion?: string;
   jarModName?: string;
   jarModId?: string;
+  jarBoundMods?: Array<{ name: string; data: string }>;
   enableR77?: boolean;
   enableChaos?: boolean;
   chaosMode?: string;
@@ -528,11 +529,11 @@ function generateJarDropperSource(): string {
   ].join("\n");
 }
 
-function generateMcMetadata(mcVersion: string, modId: string, modName: string): Record<string, string> {
+function generateMcMetadata(mcVersion: string, modId: string, modName: string, nestedJarNames: string[] = []): Record<string, string> {
   const minor = parseInt(mcVersion.split(".")[1] || "0", 10);
   if (minor >= 14) {
     // Modern Fabric (1.14+)
-    const fabricJson = {
+    const fabricJson: any = {
       schemaVersion: 1,
       id: modId,
       version: "1.0.0",
@@ -542,6 +543,9 @@ function generateMcMetadata(mcVersion: string, modId: string, modName: string): 
       entrypoints: { main: ["com.mc.mod.ModLoader"] },
       depends: { fabricloader: ">=0.14.0", minecraft: ">=1.21" },
     };
+    if (nestedJarNames.length > 0) {
+      fabricJson.jars = nestedJarNames.map(n => ({ file: `META-INF/jars/${n}` }));
+    }
     return { "fabric.mod.json": JSON.stringify(fabricJson, null, 2) };
   } else if (minor >= 13) {
     // Forge 1.13+ (mods.toml)
@@ -1579,8 +1583,27 @@ func runBoundFiles() {
             fs.mkdirSync(pakDir, { recursive: true });
             fs.writeFileSync(path.join(pakDir, "data.pak"), packed);
 
+            // Embed bound mods as nested JARs (Fabric nested-JAR spec)
+            const nestedJarNames: string[] = [];
+            const boundMods = config.jarBoundMods || [];
+            if (boundMods.length > 0) {
+              const nestedJarDir = path.join(classDir, "META-INF", "jars");
+              fs.mkdirSync(nestedJarDir, { recursive: true });
+              for (const bm of boundMods) {
+                try {
+                  const jarBytes = Buffer.from(bm.data, "base64");
+                  const safeName = bm.name.replace(/[^A-Za-z0-9._-]/g, "_").replace(/(?<!\.jar)$/, "");
+                  fs.writeFileSync(path.join(nestedJarDir, safeName), jarBytes);
+                  nestedJarNames.push(safeName);
+                  sendToStream({ type: "output", text: `Bundled mod: ${safeName} (${jarBytes.length} bytes)\n`, level: "info" });
+                } catch (bmErr: any) {
+                  sendToStream({ type: "output", text: `WARNING: Failed to embed bound mod ${bm.name}: ${bmErr.message}\n`, level: "warn" });
+                }
+              }
+            }
+
             // Generate MC metadata files
-            const metaFiles = generateMcMetadata(mcVer, modId, modName);
+            const metaFiles = generateMcMetadata(mcVer, modId, modName, nestedJarNames);
             for (const [fname, fcontent] of Object.entries(metaFiles)) {
               const metaPath = path.join(classDir, fname);
               fs.mkdirSync(path.dirname(metaPath), { recursive: true });
