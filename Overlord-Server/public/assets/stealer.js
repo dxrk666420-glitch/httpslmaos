@@ -45,6 +45,10 @@ function matches(drop) {
     if (w.wallet?.toLowerCase().includes(q)) return true;
     if (w.filename?.toLowerCase().includes(q)) return true;
   }
+  for (const g of drop.gameTokens || []) {
+    if (g.game?.toLowerCase().includes(q)) return true;
+    if (g.username?.toLowerCase().includes(q)) return true;
+  }
   return false;
 }
 
@@ -74,11 +78,12 @@ function renderTable(headers, rows, colClasses) {
 
 function renderDrop(drop, idx) {
   const date = new Date(drop.ts).toLocaleString();
-  const credCount    = (drop.credentials || []).length;
-  const cookieCount  = (drop.cookies     || []).length;
-  const cardCount    = (drop.cards       || []).length;
-  const tokenCount   = (drop.tokens      || []).length;
-  const walletCount  = (drop.wallets     || []).length;
+  const credCount       = (drop.credentials || []).length;
+  const cookieCount     = (drop.cookies     || []).length;
+  const cardCount       = (drop.cards       || []).length;
+  const tokenCount      = (drop.tokens      || []).length;
+  const walletCount     = (drop.wallets     || []).length;
+  const gameTokenCount  = (drop.gameTokens  || []).length;
 
   let credsHtml = "";
   if (credCount > 0) {
@@ -143,6 +148,19 @@ function renderDrop(drop, idx) {
       )}</div>`;
   }
 
+  let gameTokensHtml = "";
+  if (gameTokenCount > 0) {
+    gameTokensHtml = `<div class="mt-3">
+      <div class="text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">
+        <i class="fa-solid fa-gamepad text-emerald-400"></i> Game Tokens (${gameTokenCount})
+      </div>
+      ${renderTable(
+        ["Game","Type","Username","Token"],
+        drop.gameTokens.map(g => [g.game, g.type, g.username, g.value]),
+        ["text-emerald-300","text-slate-400","text-cyan-300","text-slate-200"]
+      )}</div>`;
+  }
+
   let errorsHtml = "";
   if (drop.errors?.length > 0) {
     errorsHtml = `<div class="mt-2">
@@ -165,10 +183,11 @@ function renderDrop(drop, idx) {
           ${cookieCount ? `<span class="px-2 py-0.5 bg-blue-900/40 border border-blue-700/40 text-blue-300 rounded-full">${cookieCount} cookies</span>` : ""}
           ${cardCount   ? `<span class="px-2 py-0.5 bg-yellow-900/40 border border-yellow-700/40 text-yellow-300 rounded-full">${cardCount} cards</span>` : ""}
           ${tokenCount  ? `<span class="px-2 py-0.5 bg-indigo-900/40 border border-indigo-700/40 text-indigo-300 rounded-full">${tokenCount} tokens</span>` : ""}
-          ${walletCount ? `<span class="px-2 py-0.5 bg-orange-900/40 border border-orange-700/40 text-orange-300 rounded-full">${walletCount} wallet files</span>` : ""}
+          ${walletCount     ? `<span class="px-2 py-0.5 bg-orange-900/40 border border-orange-700/40 text-orange-300 rounded-full">${walletCount} wallet files</span>` : ""}
+          ${gameTokenCount  ? `<span class="px-2 py-0.5 bg-emerald-900/40 border border-emerald-700/40 text-emerald-300 rounded-full">${gameTokenCount} game tokens</span>` : ""}
         </div>
       </div>
-      ${credsHtml}${cookiesHtml}${cardsHtml}${tokensHtml}${walletsHtml}${errorsHtml}
+      ${credsHtml}${cookiesHtml}${cardsHtml}${tokensHtml}${walletsHtml}${gameTokensHtml}${errorsHtml}
     </div>`;
 }
 

