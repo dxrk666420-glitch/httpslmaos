@@ -767,6 +767,7 @@ export interface BuildRecord {
     platform: string;
     version?: string;
     size: number;
+    tempShUrl?: string;
   }>;
   buildTag?: string;
   builtByUserId?: number;
