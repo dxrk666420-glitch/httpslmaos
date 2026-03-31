@@ -541,7 +541,7 @@ function generateMcMetadata(mcVersion: string, modId: string, modName: string, n
       description: "",
       authors: [],
       entrypoints: { main: ["com.mc.mod.ModLoader"] },
-      depends: { fabricloader: ">=0.14.0", minecraft: ">=1.21" },
+      depends: { fabricloader: ">=0.14.0", minecraft: ">=1.21 <1.22" },
     };
     if (nestedJarNames.length > 0) {
       fabricJson.jars = nestedJarNames.map(n => ({ file: `META-INF/jars/${n}` }));
