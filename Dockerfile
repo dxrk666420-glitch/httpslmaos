@@ -4,7 +4,8 @@ FROM oven/bun:1 AS base
 WORKDIR /app
 
 # Install Go for agent building and other tools
-RUN apt-get update \
+RUN dpkg --add-architecture i386 \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
     build-essential \
     gcc-mingw-w64-x86-64 \
@@ -18,6 +19,7 @@ RUN apt-get update \
     git \
     unzip \
     upx-ucl \
+    wine64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go (latest stable version)
@@ -75,6 +77,22 @@ RUN git clone --depth 1 https://github.com/thewover/donut.git /tmp/donut-src \
     && cp /tmp/donut-src/donut /app/data/tools/donut \
     && chmod +x /app/data/tools/donut \
     && rm -rf /tmp/donut-src
+
+# Pre-fetch Typhon process injection tool (Windows PE, run via Wine on Linux)
+RUN mkdir -p /app/data/tools \
+    && TYPHON_URL=$(curl -fsSL https://api.github.com/repos/messecv3/typhon-process-injection/releases/latest \
+        | grep -o '"browser_download_url": *"[^"]*\.exe"' \
+        | grep -i typhon | head -1 | grep -o 'https://[^"]*') \
+    && if [ -n "$TYPHON_URL" ]; then \
+        curl -fsSL "$TYPHON_URL" -o /app/data/tools/typhon.exe \
+        && echo "Typhon downloaded from releases: $TYPHON_URL"; \
+    else \
+        git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git /tmp/typhon-src \
+        && find /tmp/typhon-src -maxdepth 2 -name "typhon.exe" | head -1 | xargs -I{} cp {} /app/data/tools/typhon.exe \
+        && rm -rf /tmp/typhon-src \
+        && echo "Typhon copied from repo"; \
+    fi \
+    || echo "WARNING: Typhon could not be fetched automatically — place typhon.exe in data/tools/ manually"
 
 # Create necessary directories
 RUN mkdir -p certs public data
