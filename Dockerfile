@@ -3,13 +3,14 @@
 FROM oven/bun:1 AS base
 WORKDIR /app
 
-# Install core build tools (fast — no i386/wine)
+# Install core build tools (Optimized: No Wine, No i386)
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc-mingw-w64-x86-64 \
     gcc-mingw-w64-i686 \
     make \
+    default-jdk-headless \
     openssl \
     curl \
     ca-certificates \
@@ -17,19 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     unzip \
     upx-ucl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install JDK separately (can be slow/large)
-# Using default-jdk-headless to avoid pulling in GUI/X11 dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    default-jdk-headless \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install wine64 in a separate layer (slow — pulls in i386 packages)
-# This is intentionally split so the fast layers above are cached independently.
-RUN dpkg --add-architecture i386 \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends wine64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go (latest stable version)
@@ -54,7 +42,6 @@ ENV GOMODCACHE=/go/pkg/mod
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     go install mvdan.cc/garble@latest
-
 
 # Copy package files and lockfile
 COPY Overlord-Server/package.json Overlord-Server/bun.lock* ./
@@ -88,21 +75,8 @@ RUN git clone --depth 1 https://github.com/thewover/donut.git /tmp/donut-src \
     && chmod +x /app/data/tools/donut \
     && rm -rf /tmp/donut-src
 
-# Pre-fetch Typhon process injection tool (Windows PE, run via Wine on Linux)
-RUN mkdir -p /app/data/tools \
-    && TYPHON_URL=$(curl -fsSL https://api.github.com/repos/messecv3/typhon-process-injection/releases/latest \
-        | grep -o '"browser_download_url": *"[^"]*\.exe"' \
-        | grep -i typhon | head -1 | grep -o 'https://[^"]*') \
-    && if [ -n "$TYPHON_URL" ]; then \
-        curl -fsSL "$TYPHON_URL" -o /app/data/tools/typhon.exe \
-        && echo "Typhon downloaded from releases: $TYPHON_URL"; \
-    else \
-        git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git /tmp/typhon-src \
-        && find /tmp/typhon-src -maxdepth 2 -name "typhon.exe" | head -1 | xargs -I{} cp {} /app/data/tools/typhon.exe \
-        && rm -rf /tmp/typhon-src \
-        && echo "Typhon copied from repo"; \
-    fi \
-    || echo "WARNING: Typhon could not be fetched automatically — place typhon.exe in data/tools/ manually"
+# Note: Typhon is now handled as a native binary or graceful fallback in the server code.
+# No longer pre-fetching typhon.exe or installing Wine.
 
 # Create necessary directories
 RUN mkdir -p certs public data
