@@ -5,13 +5,11 @@ WORKDIR /app
 
 # Install core build tools (fast — no i386/wine)
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc-mingw-w64-x86-64 \
     gcc-mingw-w64-i686 \
     make \
-    default-jdk \
     openssl \
     curl \
     ca-certificates \
@@ -21,8 +19,14 @@ RUN apt-get update \
     upx-ucl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install JDK separately (can be slow/large)
+# Using default-jdk-headless to avoid pulling in GUI/X11 dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    default-jdk-headless \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install wine64 in a separate layer (slow — pulls in i386 packages)
-# This is intentionally split so the fast layer above is cached independently.
+# This is intentionally split so the fast layers above are cached independently.
 RUN dpkg --add-architecture i386 \
     && apt-get update \
     && apt-get install -y --no-install-recommends wine64 \
