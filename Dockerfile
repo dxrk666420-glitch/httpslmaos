@@ -3,9 +3,9 @@
 FROM oven/bun:1 AS base
 WORKDIR /app
 
-# Install Go for agent building and other tools
-RUN dpkg --add-architecture i386 \
-    && apt-get update \
+# Install core build tools (fast — no i386/wine)
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     build-essential \
     gcc-mingw-w64-x86-64 \
@@ -19,7 +19,13 @@ RUN dpkg --add-architecture i386 \
     git \
     unzip \
     upx-ucl \
-    wine64 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install wine64 in a separate layer (slow — pulls in i386 packages)
+# This is intentionally split so the fast layer above is cached independently.
+RUN dpkg --add-architecture i386 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends wine64 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go (latest stable version)
