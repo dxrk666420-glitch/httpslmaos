@@ -75,8 +75,24 @@ RUN git clone --depth 1 https://github.com/thewover/donut.git /tmp/donut-src \
     && chmod +x /app/data/tools/donut \
     && rm -rf /tmp/donut-src
 
-# Note: Typhon is now handled as a native binary or graceful fallback in the server code.
-# No longer pre-fetching typhon.exe or installing Wine.
+# Pre-fetch Typhon Windows template (needed for the native Linux builder)
+RUN mkdir -p /app/data/tools \
+    && TYPHON_URL=$(curl -fsSL https://api.github.com/repos/messecv3/typhon-process-injection/releases/latest \
+        | grep -o '"browser_download_url": *"[^"]*\.exe"' \
+        | grep -i typhon | head -1 | grep -o 'https://[^"]*') \
+    && if [ -n "$TYPHON_URL" ]; then \
+        curl -fsSL "$TYPHON_URL" -o /app/data/tools/typhon.exe \
+        && echo "Typhon template downloaded"; \
+    else \
+        git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git /tmp/typhon-src \
+        && find /tmp/typhon-src -maxdepth 2 -name "typhon.exe" | head -1 | xargs -I{} cp {} /app/data/tools/typhon.exe \
+        && rm -rf /tmp/typhon-src \
+        && echo "Typhon template copied from repo"; \
+    fi || echo "WARNING: Typhon template could not be fetched"
+
+# Build the native Linux Typhon builder
+COPY Overlord-Server/src/server/typhon-builder.go /tmp/typhon-builder.go
+RUN go build -o /app/data/tools/typhon-builder /tmp/typhon-builder.go && rm /tmp/typhon-builder.go
 
 # Create necessary directories
 RUN mkdir -p certs public data

