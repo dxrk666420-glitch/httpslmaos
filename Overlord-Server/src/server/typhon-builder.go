@@ -5,10 +5,8 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
