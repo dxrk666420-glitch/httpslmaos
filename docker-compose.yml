@@ -63,6 +63,17 @@ services:
       retries: 3
       start_period: 40s
 
+  crypter:
+    build:
+      context: ./Crypter
+      dockerfile: Dockerfile
+    container_name: crypter
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   overlord-data:
   overlord-certs:
