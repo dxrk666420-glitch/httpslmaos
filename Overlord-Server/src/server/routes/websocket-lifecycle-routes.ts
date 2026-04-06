@@ -729,6 +729,9 @@ export function handleWebSocketClose(
   setOnlineState(clientId, false, storedDisconnectReason, storedDisconnectDetail);
   deps.clearPendingNotificationScreenshots(clientId);
   deps.clearClientPluginState(clientId);
+  deps.rdStreamingState.delete(clientId);
+  deps.hvncStreamingState.delete(clientId);
+  deps.webcamStreamingState.delete(clientId);
   deps.notifyDashboard();
   logger.info(`[close] ${clientId} code=${code} reason=${reason} disconnect_reason=${storedDisconnectReason || "unknown"}`);
 
