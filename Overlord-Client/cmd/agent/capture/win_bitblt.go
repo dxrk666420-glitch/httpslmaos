@@ -485,7 +485,10 @@ func (s *capState) ensure(hdcScreen uintptr, w, h int) (uintptr, uintptr, []byte
 		if newBmp == 0 || bits == nil {
 			return 0, 0, nil, 0, syscall.EINVAL
 		}
-		selectObject(s.hdcMem, newBmp)
+		if selectObject(s.hdcMem, newBmp) == 0 {
+			deleteObject(newBmp)
+			return 0, 0, nil, 0, syscall.EINVAL
+		}
 		if s.hbmp != 0 {
 			deleteObject(s.hbmp)
 		}
@@ -516,6 +519,7 @@ func (s *capState) reset() {
 	s.w = 0
 	s.h = 0
 	s.bits = nil
+	stateCreatedAt = time.Time{}
 }
 
 func captureScale() float64 {

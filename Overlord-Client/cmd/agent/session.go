@@ -737,13 +737,13 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 		capture.Loop(shotCtx, env)
 	})
 
-	goSafe("activewindow", nil, func() {
+	goSafe("activewindow", cancel, func() {
 		if err := activewindow.Start(ctx, env); err != nil {
 			log.Printf("activewindow error: %v", err)
 		}
 	})
 
-	goSafe("clipboard", nil, func() {
+	goSafe("clipboard", cancel, func() {
 		if err := activewindow.StartClipboard(ctx, env); err != nil {
 			log.Printf("clipboard error: %v", err)
 		}

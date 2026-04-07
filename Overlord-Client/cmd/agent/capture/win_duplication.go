@@ -24,6 +24,8 @@ const (
 	dxgiErrorNotFound            uintptr = 0x887A0002
 	dxgiErrorWaitTimeout         uintptr = 0x887A0027
 	dxgiErrorAccessLost          uintptr = 0x887A0026
+	dxgiErrorDeviceRemoved       uintptr = 0x887A0005
+	dxgiErrorDeviceReset         uintptr = 0x887A0007
 	S_OK                         uintptr = 0
 )
 
@@ -613,6 +615,7 @@ type duplicationState struct {
 	lastFrameAt   time.Time
 	lastFail      time.Time
 	cursorScratch *image.RGBA
+	createdAt     time.Time
 }
 
 func SetDesktopDuplication(enabled bool) {
@@ -675,6 +678,7 @@ func (s *duplicationState) closeLocked() {
 	s.lastFrame = nil
 	s.lastFrameAt = time.Time{}
 	s.cursorScratch = nil
+	s.createdAt = time.Time{}
 }
 
 func (s *duplicationState) capture(display int) (*image.RGBA, error) {
@@ -712,6 +716,10 @@ func (s *duplicationState) capture(display int) (*image.RGBA, error) {
 	if hr == dxgiErrorAccessLost {
 		s.closeLocked()
 		return nil, errors.New("dxgi: access lost")
+	}
+	if hr == dxgiErrorDeviceRemoved || hr == dxgiErrorDeviceReset {
+		s.closeLocked()
+		return nil, fmt.Errorf("dxgi: device lost 0x%x", hr)
 	}
 	if hr != S_OK {
 		return nil, fmt.Errorf("dxgi: acquire frame failed 0x%x", hr)
@@ -826,10 +834,17 @@ func cloneRGBA(src *image.RGBA) *image.RGBA {
 }
 
 func (s *duplicationState) ensure(display int) error {
+	const dxgiDeviceMaxAge = 4 * time.Hour
 	if s.dup != nil && s.display == display {
-		return nil
+		if !s.createdAt.IsZero() && time.Since(s.createdAt) > dxgiDeviceMaxAge {
+			log.Printf("capture: dxgi device age exceeded %v; forcing re-init", dxgiDeviceMaxAge)
+			s.closeLocked()
+		} else {
+			return nil
+		}
+	} else {
+		s.closeLocked()
 	}
-	s.closeLocked()
 
 	monitors := monitorList()
 	if display < 0 || display >= len(monitors) {
@@ -903,6 +918,7 @@ func (s *duplicationState) ensure(display int) error {
 	s.display = display
 	s.bounds = bounds
 	s.cursorBounds = cursorBounds
+	s.createdAt = time.Now()
 
 	return nil
 }
@@ -951,10 +967,13 @@ func (s *duplicationState) readbackFrame(width, height int, rotation uint32, res
 	s.context.CopyResource(s.staging, tex)
 	var mapped d3d11MappedSubresource
 	hr = s.context.Map(s.staging, 0, d3d11MapRead, 0, &mapped)
-	if hr != S_OK || mapped.Data == nil || mapped.RowPitch == 0 {
+	if hr != S_OK {
 		return nil, hr
 	}
 	defer s.context.Unmap(s.staging, 0)
+	if mapped.Data == nil || mapped.RowPitch == 0 {
+		return nil, uintptr(1)
+	}
 
 	pitch := int(mapped.RowPitch)
 	src := unsafe.Slice((*byte)(mapped.Data), pitch*int(srcDesc.Height))

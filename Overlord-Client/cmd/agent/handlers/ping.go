@@ -18,6 +18,7 @@ func HandlePing(ctx context.Context, env *runtime.Env, envelope map[string]inter
 
 	pong := wire.Pong{Type: "pong", TS: ts}
 	go func() {
+		defer recoverAndLog("pong sender", nil)
 		if err := wire.WriteMsg(ctx, env.Conn, pong); err != nil {
 			log.Printf("ping: failed to send pong: %v", err)
 		}

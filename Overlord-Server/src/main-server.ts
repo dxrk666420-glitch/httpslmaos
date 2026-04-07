@@ -288,6 +288,7 @@ type PendingScript = {
   resolve: (result: any) => void;
   reject: (error: any) => void;
   timeout: NodeJS.Timeout;
+  clientId: string;
 };
 const pendingScripts = new Map<string, PendingScript>();
 
@@ -295,6 +296,7 @@ type PendingCommandReply = {
   resolve: (result: { ok: boolean; message?: string }) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
+  clientId: string;
 };
 const pendingCommandReplies = new Map<string, PendingCommandReply>();
 
@@ -627,4 +629,14 @@ process.on("SIGTERM", () => {
   logger.info("\n[server] Shutting down gracefully...");
   flushAuditLogsSync();
   process.exit(0);
+});
+
+process.on("uncaughtException", (err) => {
+  logger.error("[server] uncaught exception:", err);
+  flushAuditLogsSync();
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error("[server] unhandled rejection:", reason);
 });
