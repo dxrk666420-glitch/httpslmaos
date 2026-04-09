@@ -613,6 +613,7 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 	hello.GPU = hw.GPU
 	hello.RAM = hw.RAM
 	hello.IsAdmin = sysinfo.IsAdmin()
+	hello.Elevation = sysinfo.Elevation()
 
 	if err := wire.WriteMsg(ctx, env.Conn, hello); err != nil {
 		return fmt.Errorf("send hello: %w", err)

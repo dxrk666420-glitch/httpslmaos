@@ -20,6 +20,7 @@ type Hello struct {
 	GPU         string        `msgpack:"gpu,omitempty"`
 	RAM         string        `msgpack:"ram,omitempty"`
 	IsAdmin     bool          `msgpack:"isAdmin,omitempty"`
+	Elevation   string        `msgpack:"elevation,omitempty"`
 }
 
 type EnrollmentChallenge struct {

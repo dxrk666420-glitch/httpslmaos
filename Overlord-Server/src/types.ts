@@ -29,6 +29,7 @@ export type ClientInfo = {
   gpu?: string;
   ram?: string;
   isAdmin?: boolean;
+  elevation?: string;
   enrollmentStatus?: EnrollmentStatus;
   publicKey?: string;
   keyFingerprint?: string;

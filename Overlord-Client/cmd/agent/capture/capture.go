@@ -279,13 +279,14 @@ func captureAllDisplaysAndSend(ctx context.Context, env *rt.Env) error {
 
 	quality := jpegQuality()
 	frame, _, err := buildFrame(canvas, 0, quality)
+	canvasW, canvasH := canvas.Rect.Dx(), canvas.Rect.Dy()
 	PutRGBA(canvas)
 	canvas = nil
 	if err != nil {
 		return err
 	}
 	frame.Header.FPS = 1
-	log.Printf("capture: all-displays initial frame %dx%d (%d monitors)", canvas.Rect.Dx(), canvas.Rect.Dy(), n)
+	log.Printf("capture: all-displays initial frame %dx%d (%d monitors)", canvasW, canvasH, n)
 	return wire.WriteMsg(ctx, env.Conn, frame)
 }
 

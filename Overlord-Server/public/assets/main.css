@@ -434,6 +434,16 @@ p {
   color: #fef08a;
   border-color: rgba(234, 179, 8, 0.45);
 }
+.pill-system {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.45);
+}
+.pill-ti {
+  background: rgba(168, 85, 247, 0.18);
+  color: #d8b4fe;
+  border-color: rgba(168, 85, 247, 0.45);
+}
 
 /* Hardware info toggle & panel */
 .pill-hw {

@@ -29,6 +29,7 @@ export function handleClientsRequest(req: Request): Response {
       return {
         ...item,
         isAdmin: live.isAdmin ?? item.isAdmin,
+        elevation: live.elevation ?? item.elevation,
         ...(live.monitorInfo?.length ? {
           monitors: live.monitorInfo.length,
           monitorInfo: live.monitorInfo,

@@ -90,6 +90,7 @@ export function handleHello(
   info.monitorInfo = (payload as any).monitorInfo || info.monitorInfo;
   info.inMemory = !!(payload as any).inMemory;
   info.isAdmin = !!(payload as any).isAdmin;
+  info.elevation = typeof (payload as any).elevation === "string" ? (payload as any).elevation : info.elevation;
   info.cpu = (payload as any).cpu || info.cpu;
   info.gpu = (payload as any).gpu || info.gpu;
   info.ram = (payload as any).ram || info.ram;
@@ -119,6 +120,7 @@ export function handleHello(
     gpu: info.gpu,
     ram: info.ram,
     isAdmin: info.isAdmin,
+    elevation: info.elevation,
     lastSeen: info.lastSeen,
     online: 1,
   });
