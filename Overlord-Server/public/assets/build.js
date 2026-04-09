@@ -702,7 +702,7 @@ if (cloneExeUpload) {
 }
 
 const MAX_BIND_FILES = 5;
-const MAX_BIND_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_BIND_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 let boundFiles = []; // { name, base64, targetOS: string[], execute: boolean }
 
@@ -796,7 +796,7 @@ if (bindFileInput) {
       return;
     }
     if (file.size > MAX_BIND_FILE_BYTES) {
-      alert(`Each bound file must be under 10 MB. "${file.name}" is too large.`);
+      alert(`Each bound file must be under 50 MB. "${file.name}" is too large.`);
       return;
     }
     const safeName = sanitizeBindName(file.name);
