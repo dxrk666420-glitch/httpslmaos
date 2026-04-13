@@ -20,7 +20,7 @@ const tokenCache = new Map<
   string,
   { payload: JWTPayload; timestamp: number }
 >();
-const TOKEN_CACHE_TTL = 5000;
+const TOKEN_CACHE_TTL = 500;
 
 function getSecretKey(): Uint8Array {
   const config = getConfig();
@@ -206,7 +206,7 @@ export async function authenticateRequest(
   return {
     username: payload.sub,
     userId: payload.userId,
-    role: payload.role,
+    role: user.role,
   };
 }
 

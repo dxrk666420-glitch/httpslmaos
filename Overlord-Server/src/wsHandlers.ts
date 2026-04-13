@@ -88,6 +88,12 @@ export function handleHello(
   info.user = payload.user;
   info.monitors = payload.monitors;
   info.monitorInfo = (payload as any).monitorInfo || info.monitorInfo;
+  info.inMemory = !!(payload as any).inMemory;
+  info.isAdmin = !!(payload as any).isAdmin;
+  info.elevation = typeof (payload as any).elevation === "string" ? (payload as any).elevation : info.elevation;
+  info.cpu = (payload as any).cpu || info.cpu;
+  info.gpu = (payload as any).gpu || info.gpu;
+  info.ram = (payload as any).ram || info.ram;
   const geo = ip ? geoip.lookup(ip) : undefined;
   const countryRaw =
     geo?.country || (payload as any).country || info.country || "ZZ";
@@ -110,6 +116,11 @@ export function handleHello(
     user: info.user,
     monitors: info.monitors,
     country: info.country,
+    cpu: info.cpu,
+    gpu: info.gpu,
+    ram: info.ram,
+    isAdmin: info.isAdmin,
+    elevation: info.elevation,
     lastSeen: info.lastSeen,
     online: 1,
   });
@@ -128,6 +139,7 @@ export function handlePing(info: ClientInfo, payload: WireMessage, ws: any) {
       id: info.id,
       lastSeen: info.lastSeen,
       online: 1,
+      isAdmin: info.isAdmin,
     });
   }
   ws.send(encodeMessage({ type: "pong", ts: payload.ts || Date.now() }));
@@ -184,6 +196,7 @@ export function handlePong(info: ClientInfo, payload: WireMessage) {
       pingMs: info.pingMs,
       lastSeen: info.lastSeen,
       online: 1,
+      isAdmin: info.isAdmin,
     });
     lastClientDbSync.set(info.id, nowTs);
 
@@ -194,6 +207,7 @@ export function handlePong(info: ClientInfo, payload: WireMessage) {
         id: info.id,
         lastSeen: info.lastSeen,
         online: 1,
+        isAdmin: info.isAdmin,
       });
     }
   }
@@ -244,7 +258,7 @@ export function handleFrame(info: ClientInfo, payload: any) {
     info.lastSeen = now;
     info.online = true;
     if (shouldSyncClientToDb(info.id, now)) {
-      queueClientDbUpdate({ id: info.id, lastSeen: now, online: 1 });
+      queueClientDbUpdate({ id: info.id, lastSeen: now, online: 1, isAdmin: info.isAdmin });
     }
   }
 }

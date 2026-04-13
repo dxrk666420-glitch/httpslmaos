@@ -19,6 +19,7 @@
     />
     <link rel="icon" type="image/x-icon" href="/assets/favicon.ico" />
     <link rel="stylesheet" href="/assets/main.css" />
+    <link rel="stylesheet" href="/assets/custom.css" />
     <link rel="stylesheet" href="/assets/console.css" />
   </head>
   <body class="console-body">
@@ -26,7 +27,6 @@
     <main class="console-main">
       <div class="console-card">
         <div class="console-meta">
-          <span id="status-pill" class="pill pill-offline"><i class="fa-solid fa-circle"></i> Connecting</span>
           <div class="console-target">
             <div class="muted text-sm">Client</div>
             <div class="console-target-id" id="client-label">-</div>
@@ -71,7 +71,7 @@
         </form>
       </div>
     </main>
-    <script src="https://cdn.jsdelivr.net/npm/msgpackr@1.11.8/dist/index.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/msgpackr@1.11.8/dist/index.js"></script>
     <script type="module" src="/assets/nav.js"></script>
     <script type="module" src="/assets/console.js"></script>
   </body>

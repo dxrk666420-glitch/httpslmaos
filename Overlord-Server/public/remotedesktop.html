@@ -19,8 +19,9 @@
       referrerpolicy="no-referrer"
     />
     <link rel="stylesheet" href="/assets/main.css" />
+    <link rel="stylesheet" href="/assets/custom.css" />
     <link rel="stylesheet" href="/assets/console.css" />
-    <script src="/assets/logout.js"></script>
+    <script defer src="/assets/logout.js"></script>
   </head>
   <body class="min-h-screen bg-slate-950 text-slate-100">
     <header id="top-nav"></header>
@@ -136,6 +137,9 @@
             <label class="flex items-center gap-2 text-sm text-slate-200" title="Use GPU desktop duplication (Windows only)"
               ><input type="checkbox" id="duplicationCtrl" /> GPU Capture</label
             >
+            <label class="flex items-center gap-2 text-sm text-slate-200" title="Sync clipboard between your browser and the remote machine"
+              ><input type="checkbox" id="clipboardSyncCtrl" /> Clipboard Sync</label
+            >
             <label class="flex items-center gap-2 text-sm text-slate-200" title="Smooths mouse input for steadier movement">
               <span class="text-slate-400">Smoothing</span>
               <input id="smoothingSlider" type="range" min="0" max="80" step="5" value="20" class="accent-emerald-400" />
@@ -200,7 +204,7 @@
       </div>
     </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/msgpackr@1.11.8/dist/index.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/msgpackr@1.11.8/dist/index.js"></script>
     <script type="module" src="/assets/nav.js"></script>
     <script type="module" src="/assets/remotedesktop.js"></script>
   </body>

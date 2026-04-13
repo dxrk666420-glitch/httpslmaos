@@ -23,6 +23,12 @@ export type ClientInfo = {
   monitors?: number;
   monitorInfo?: { width: number; height: number }[];
   country?: string;
+  inMemory?: boolean;
+  isAdmin?: boolean;
+  elevation?: string;
+  cpu?: string;
+  gpu?: string;
+  ram?: string;
   pingMs?: number;
   enrollmentStatus?: EnrollmentStatus;
   publicKey?: string;

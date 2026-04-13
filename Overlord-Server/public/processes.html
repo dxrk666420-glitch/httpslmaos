@@ -18,7 +18,8 @@
       referrerpolicy="no-referrer"
     />
     <link rel="icon" type="image/x-icon" href="/assets/favicon.ico" />
-    <script src="https://cdn.jsdelivr.net/npm/msgpackr@1.11.8/dist/index.js"></script>
+    <link rel="stylesheet" href="/assets/custom.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/msgpackr@1.11.8/dist/index.js"></script>
     <style>
       body {
         font-family: "Inter", sans-serif;
@@ -235,98 +236,6 @@
             <!-- Processes will be inserted here -->
           </div>
         </div>
-
-        <!-- System Tools -->
-        <div class="mt-4 bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-          <h3 class="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
-            <i class="fa-solid fa-toolbox text-violet-400"></i> System Tools
-          </h3>
-
-          <!-- Anti-Forensics -->
-          <div class="mb-3 pb-3 border-b border-slate-800">
-            <div class="flex items-center gap-2 mb-2">
-              <button id="cleanup-btn"
-                class="flex items-center gap-2 px-3 py-1.5 bg-red-900/40 hover:bg-red-900/70 border border-red-700/50 text-red-300 rounded-lg text-xs font-medium transition-colors">
-                <i class="fa-solid fa-broom"></i> Clean Traces
-              </button>
-              <span class="text-xs text-slate-500">Clears event logs, temp files, recent files, prefetch, DNS cache</span>
-            </div>
-            <div id="cleanup-result" class="hidden text-xs font-mono bg-slate-800/60 rounded p-2 max-h-32 overflow-y-auto"></div>
-          </div>
-
-          <!-- Credential Stealer -->
-          <div class="mb-3 pb-3 border-b border-slate-800">
-            <div class="flex items-center gap-2 mb-2">
-              <button id="steal-btn"
-                class="flex items-center gap-2 px-3 py-1.5 bg-violet-900/40 hover:bg-violet-900/70 border border-violet-700/50 text-violet-300 rounded-lg text-xs font-medium transition-colors">
-                <i class="fa-solid fa-key"></i> Steal Credentials
-              </button>
-              <span class="text-xs text-slate-500">Extracts browser passwords &amp; Discord tokens (Windows only)</span>
-            </div>
-            <div id="steal-status" class="hidden text-xs text-slate-400 italic"></div>
-            <div id="steal-result" class="hidden mt-2">
-              <div id="steal-summary" class="text-xs text-slate-400 mb-1"></div>
-              <div id="steal-creds" class="text-xs font-mono bg-slate-800/60 rounded p-2 max-h-48 overflow-y-auto space-y-1"></div>
-            </div>
-          </div>
-
-          <!-- Fun Actions -->
-          <div>
-            <div class="text-xs text-slate-500 mb-2 font-medium">Quick Actions</div>
-            <div class="flex flex-wrap gap-2">
-              <button data-fun="msgbox"
-                class="fun-btn flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg text-xs transition-colors">
-                <i class="fa-solid fa-comment-dots text-yellow-400"></i> Message Box
-              </button>
-              <button data-fun="tts"
-                class="fun-btn flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg text-xs transition-colors">
-                <i class="fa-solid fa-volume-high text-green-400"></i> TTS
-              </button>
-              <button data-fun="wallpaper"
-                class="fun-btn flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg text-xs transition-colors">
-                <i class="fa-solid fa-image text-blue-400"></i> Wallpaper
-              </button>
-              <button data-fun="lock"
-                class="fun-btn flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg text-xs transition-colors">
-                <i class="fa-solid fa-lock text-orange-400"></i> Lock Screen
-              </button>
-              <div class="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs">
-                <i class="fa-solid fa-volume-xmark text-slate-400"></i>
-                <input type="range" id="volume-slider" min="0" max="100" value="50" class="w-20 accent-cyan-500" />
-                <span id="volume-label" class="text-slate-300 w-8">50%</span>
-                <button data-fun="volume" class="fun-btn px-2 py-0.5 bg-cyan-800/40 hover:bg-cyan-700/60 text-cyan-300 rounded text-xs">Set</button>
-              </div>
-              <div class="flex items-center gap-1">
-                <select id="shutdown-mode"
-                  class="px-2 py-1.5 bg-slate-800 border border-slate-700 text-slate-300 rounded-lg text-xs focus:outline-none">
-                  <option value="shutdown">Shutdown</option>
-                  <option value="restart">Restart</option>
-                  <option value="sleep">Sleep</option>
-                  <option value="hibernate">Hibernate</option>
-                  <option value="logoff">Logoff</option>
-                </select>
-                <button data-fun="shutdown"
-                  class="fun-btn flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-red-900/60 border border-slate-700 hover:border-red-700/60 text-slate-300 hover:text-red-300 rounded-lg text-xs transition-colors">
-                  <i class="fa-solid fa-power-off text-red-400"></i> Go
-                </button>
-              </div>
-            </div>
-            <div id="fun-toast" class="hidden mt-2 text-xs text-slate-400 italic"></div>
-          </div>
-        </div>
-
-        <!-- Modal for text input (msgbox / tts / wallpaper) -->
-        <div id="fun-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
-          <div class="bg-slate-900 border border-slate-700 rounded-xl p-5 w-80 flex flex-col gap-3 shadow-2xl">
-            <h4 id="fun-modal-title" class="text-sm font-semibold text-slate-200"></h4>
-            <div id="fun-modal-fields" class="flex flex-col gap-2"></div>
-            <div class="flex gap-2 justify-end mt-1">
-              <button id="fun-modal-cancel" class="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
-              <button id="fun-modal-ok" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors">Send</button>
-            </div>
-          </div>
-        </div>
-
       </div>
     </main>
 

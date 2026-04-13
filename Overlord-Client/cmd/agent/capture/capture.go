@@ -98,6 +98,14 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 		log.Printf("capture: requested display %d out of range, defaulting to 0 (monitors=%d)", env.SelectedDisplay, displays)
 	}
 	t0 := time.Now()
+
+	fails := consecutiveCaptureFails.Load()
+	if fails >= 3 {
+		ResetDesktopCapture()
+		ResetMonitorCache()
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	img, err := safeCaptureDisplay(display)
 	if err != nil {
 		img, err = safeCaptureDisplay(display)
@@ -108,17 +116,22 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 		}
 	}
 	if err != nil {
-		log.Printf("capture: capture failed: %v (sending black frame)", err)
+		consecutiveCaptureFails.Add(1)
+		log.Printf("capture: capture failed: %v (sending black frame, consecutive=%d)", err, consecutiveCaptureFails.Load())
 		return sendBlackFrame(ctx, env)
 	}
 	if img == nil {
-		log.Printf("capture: capture returned nil image (sending black frame)")
+		consecutiveCaptureFails.Add(1)
+		log.Printf("capture: capture returned nil image (sending black frame, consecutive=%d)", consecutiveCaptureFails.Load())
 		return sendBlackFrame(ctx, env)
 	}
+	consecutiveCaptureFails.Store(0)
 	captureDur := time.Since(t0)
 
 	quality := jpegQuality()
 	frame, encodeDur, err := buildFrame(img, display, quality)
+	PutRGBA(img)
+	img = nil
 	if err != nil {
 		return err
 	}
@@ -130,6 +143,9 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 	frame.Header.FPS = fps
 	if ctx.Err() != nil {
 		return nil
+	}
+	if !AcquireFrameSlot() {
+		return nil // backpressure: server hasn't acked previous frames
 	}
 	sendStart := time.Now()
 	err = wire.WriteMsg(ctx, env.Conn, frame)
@@ -252,19 +268,25 @@ func captureAllDisplaysAndSend(ctx context.Context, env *rt.Env) error {
 			cH = ry
 		}
 	}
-	canvas := image.NewRGBA(image.Rect(0, 0, cW, cH))
+	canvas := GetRGBA(cW, cH)
 	for _, sp := range scaled {
 		dst := image.Rect(sp.offX, sp.offY, sp.offX+sp.img.Rect.Dx(), sp.offY+sp.img.Rect.Dy())
 		draw.Draw(canvas, dst, sp.img, sp.img.Rect.Min, draw.Src)
 	}
+	for _, part := range parts {
+		PutRGBA(part.img)
+	}
 
 	quality := jpegQuality()
 	frame, _, err := buildFrame(canvas, 0, quality)
+	canvasW, canvasH := canvas.Rect.Dx(), canvas.Rect.Dy()
+	PutRGBA(canvas)
+	canvas = nil
 	if err != nil {
 		return err
 	}
 	frame.Header.FPS = 1
-	log.Printf("capture: all-displays initial frame %dx%d (%d monitors)", canvas.Rect.Dx(), canvas.Rect.Dy(), n)
+	log.Printf("capture: all-displays initial frame %dx%d (%d monitors)", canvasW, canvasH, n)
 	return wire.WriteMsg(ctx, env.Conn, frame)
 }
 
@@ -322,6 +344,8 @@ func MonitorCount() int {
 }
 
 const frameLogInterval = 5 * time.Second
+
+var consecutiveCaptureFails atomic.Int64
 
 var (
 	fpsWindowStart atomic.Int64

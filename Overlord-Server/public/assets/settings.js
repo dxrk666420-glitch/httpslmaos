@@ -7,6 +7,7 @@ import {
 } from "./notify-client.js";
 
 const PREF_REFRESH_KEY = "overlord_refresh_interval_seconds";
+const NAV_MODE_KEY = "sb_mode";
 
 const usernameEl = document.getElementById("settings-username");
 const roleEl = document.getElementById("settings-role");
@@ -65,6 +66,10 @@ const exportImportSection = document.getElementById("export-import-section");
 const exportSettingsBtn = document.getElementById("export-settings-btn");
 const importSettingsFile = document.getElementById("import-settings-file");
 const exportImportMessage = document.getElementById("export-import-message");
+
+const wipeOfflineSection = document.getElementById("wipe-offline-section");
+const wipeOfflineBtn = document.getElementById("wipe-offline-btn");
+const wipeOfflineMessage = document.getElementById("wipe-offline-message");
 
 let currentUser = null;
 let securityConfig = null;
@@ -272,6 +277,17 @@ async function loadTlsSettings() {
   setTlsFormDisabled(false);
 }
 
+function updateNavLayoutButtons(mode, sidebarBtn, topbarBtn) {
+  const active = ["bg-indigo-600/80", "border-indigo-500", "text-white"];
+  const inactive = ["bg-slate-800", "border-slate-700", "text-slate-400", "hover:bg-slate-700", "hover:text-slate-200"];
+  const base = ["nav-layout-btn", "flex-1", "flex", "items-center", "justify-center", "gap-2", "px-3", "py-2", "rounded-lg", "border", "text-sm", "font-medium", "transition-colors"];
+
+  sidebarBtn.className = [...base, ...(mode === "sidebar" ? active : inactive)].join(" ");
+  topbarBtn.className = [...base, ...(mode === "topbar" ? active : inactive)].join(" ");
+  sidebarBtn.dataset.selected = mode === "sidebar" ? "true" : "false";
+  topbarBtn.dataset.selected = mode === "topbar" ? "true" : "false";
+}
+
 function loadPrefs() {
   prefNotificationsInput.checked = getNotificationsEnabled();
   if (prefDesktopNotificationsInput) {
@@ -279,6 +295,13 @@ function loadPrefs() {
   }
   const refreshSeconds = Number(localStorage.getItem(PREF_REFRESH_KEY) || 8);
   prefRefreshSecondsInput.value = String(Math.min(120, Math.max(3, refreshSeconds)));
+
+  const navMode = localStorage.getItem(NAV_MODE_KEY) || "topbar";
+  const sidebarBtn = document.getElementById("pref-nav-sidebar");
+  const topbarBtn = document.getElementById("pref-nav-topbar");
+  if (sidebarBtn && topbarBtn) {
+    updateNavLayoutButtons(navMode === "topbar" ? "topbar" : "sidebar", sidebarBtn, topbarBtn);
+  }
 }
 
 async function loadCurrentUser() {
@@ -365,6 +388,7 @@ function savePrefs(event) {
     if (prefDesktopNotificationsHint) prefDesktopNotificationsHint.classList.add("hidden");
     showMessage("Preferences saved.");
   }
+
 }
 
 async function saveSecurityPolicy(event) {
@@ -774,6 +798,35 @@ async function importSettings(event) {
   }
 }
 
+async function wipeOfflineClients() {
+  if (!wipeOfflineMessage) return;
+  if (!confirm("Remove ALL offline clients from the dashboard?\n\nThey will reappear if they reconnect later.")) return;
+
+  wipeOfflineBtn.disabled = true;
+  wipeOfflineMessage.className = "hidden text-sm rounded-lg px-3 py-2 border";
+
+  try {
+    const res = await fetch("/api/clients/offline", {
+      method: "DELETE",
+      credentials: "include",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      wipeOfflineMessage.textContent = data.error || "Failed to wipe offline clients.";
+      wipeOfflineMessage.className = "text-sm rounded-lg px-3 py-2 border text-rose-200 border-rose-700 bg-rose-900/30";
+    } else {
+      const n = data.count ?? 0;
+      wipeOfflineMessage.textContent = n === 0 ? "No offline clients found." : `Removed ${n} offline client${n === 1 ? "" : "s"}.`;
+      wipeOfflineMessage.className = "text-sm rounded-lg px-3 py-2 border text-emerald-200 border-emerald-700 bg-emerald-900/30";
+    }
+  } catch {
+    wipeOfflineMessage.textContent = "Request failed.";
+    wipeOfflineMessage.className = "text-sm rounded-lg px-3 py-2 border text-rose-200 border-rose-700 bg-rose-900/30";
+  } finally {
+    wipeOfflineBtn.disabled = false;
+  }
+}
+
 async function init() {
   try {
     await loadCurrentUser();
@@ -783,6 +836,10 @@ async function init() {
       exportImportSection.classList.remove("hidden");
     }
 
+    if (canManageClientBans(currentUser?.role) && wipeOfflineSection) {
+      wipeOfflineSection.classList.remove("hidden");
+    }
+
     await loadSecurityPolicy();
     await loadTlsSettings();
     await loadAppearanceSettings();
@@ -790,6 +847,22 @@ async function init() {
 
     passwordForm.addEventListener("submit", updatePassword);
     prefsForm.addEventListener("submit", savePrefs);
+
+    const sidebarBtn = document.getElementById("pref-nav-sidebar");
+    const topbarBtn = document.getElementById("pref-nav-topbar");
+    if (sidebarBtn && topbarBtn) {
+      sidebarBtn.addEventListener("click", () => {
+        if (localStorage.getItem(NAV_MODE_KEY) === "sidebar") return;
+        localStorage.setItem(NAV_MODE_KEY, "sidebar");
+        window.location.reload();
+      });
+      topbarBtn.addEventListener("click", () => {
+        if (localStorage.getItem(NAV_MODE_KEY) === "topbar") return;
+        localStorage.setItem(NAV_MODE_KEY, "topbar");
+        window.location.reload();
+      });
+    }
+
     securityForm.addEventListener("submit", saveSecurityPolicy);
     tlsForm.addEventListener("submit", saveTlsSettings);
     tlsCertbotAutoBtn.addEventListener("click", runCertbotAutoSetup);
@@ -798,6 +871,7 @@ async function init() {
     if (importSettingsFile) importSettingsFile.addEventListener("change", importSettings);
     refreshBansBtn.addEventListener("click", loadBannedIps);
     bansTableBody.addEventListener("click", handleUnbanClick);
+    if (wipeOfflineBtn) wipeOfflineBtn.addEventListener("click", wipeOfflineClients);
   } catch (error) {
     console.error("settings init failed", error);
     showMessage("Failed to load settings.", "error");

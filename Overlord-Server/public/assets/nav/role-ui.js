@@ -4,14 +4,13 @@ export function applyUserRoleUI(user, refs) {
     roleBadge,
     usersLink,
     buildLink,
+    solPublishLink,
     pluginsLink,
     scriptsLink,
     logsLink,
     notificationsLink,
-    vaultLink,
-    rootkitLink,
-    stealerLink,
     enrollmentLink,
+    fileShareLink,
   } = refs;
 
   if (!user || !usernameDisplay || !roleBadge) return;
@@ -70,16 +69,15 @@ export function applyUserRoleUI(user, refs) {
     usersLink?.classList.remove("hidden");
     pluginsLink?.classList.remove("hidden");
     logsLink?.classList.remove("hidden");
+    solPublishLink?.classList.remove("hidden");
   }
   if (user.role === "admin" || user.role === "operator") {
     buildLink?.classList.remove("hidden");
     notificationsLink?.classList.remove("hidden");
-    vaultLink?.classList.remove("hidden");
-    rootkitLink?.classList.remove("hidden");
-    stealerLink?.classList.remove("hidden");
     enrollmentLink?.classList.remove("hidden");
   }
   if (user.role !== "viewer") {
     scriptsLink?.classList.remove("hidden");
+    fileShareLink?.classList.remove("hidden");
   }
 }

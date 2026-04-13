@@ -22,14 +22,18 @@ export function handleClientsRequest(req: Request): Response {
   const statusFilter = url.searchParams.get("status") || "all";
   const osFilter = url.searchParams.get("os") || "all";
 
-  const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter });
+  const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, enrollmentFilter: "approved" });
   const items = result.items.map((item) => {
     const live = clientManager.getClient(item.id);
-    if (live?.monitorInfo?.length) {
+    if (live) {
       return {
         ...item,
-        monitors: live.monitorInfo.length,
-        monitorInfo: live.monitorInfo,
+        isAdmin: live.isAdmin ?? item.isAdmin,
+        elevation: live.elevation ?? item.elevation,
+        ...(live.monitorInfo?.length ? {
+          monitors: live.monitorInfo.length,
+          monitorInfo: live.monitorInfo,
+        } : {}),
       };
     }
     return item;
