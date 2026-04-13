@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Overlord Server Dockerfile
-FROM oven/bun:1.3.9 AS base
+FROM oven/bun:1 AS base
 WORKDIR /app
 
 # Install Go for agent building and other tools
@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 COPY Overlord-Server/package.json Overlord-Server/bun.lock* ./
 
 # Install dependencies
-RUN bun install --frozen-lockfile
+RUN bun install
 
 # Copy source code and client code (needed for builds)
 COPY Overlord-Server/ ./
