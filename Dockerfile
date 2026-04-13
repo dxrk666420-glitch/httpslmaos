@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Overlord Server Dockerfile
-FROM oven/bun:1 AS base
+FROM oven/bun:1.3.9 AS base
 WORKDIR /app
 
 # Install Go for agent building and other tools
