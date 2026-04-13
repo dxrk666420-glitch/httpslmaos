@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 
 # Copy package files and lockfile
-COPY Overlord-Server/package.json Overlord-Server/bun.lock ./
+COPY Overlord-Server/package.json ./
 
 # Install dependencies
 RUN bun install
