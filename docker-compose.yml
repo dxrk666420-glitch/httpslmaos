@@ -70,6 +70,28 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  loot-server:
+    build:
+      context: ./Loot-Server
+      dockerfile: Dockerfile
+    container_name: loot-server
+    network_mode: host
+    environment:
+      LOOT_PORT: ${LOOT_PORT:-5175}
+      HOST: ${HOST:-0.0.0.0}
+      DATA_DIR: /app/data
+      JWT_SECRET: ${JWT_SECRET:-}
+      # URL of overlord-server for login proxying (host networking)
+      OVERLORD_URL: ${OVERLORD_URL:-http://localhost:5173}
+    volumes:
+      - overlord-data:/app/data
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - overlord-server
+
 volumes:
   overlord-data:
   overlord-certs:
