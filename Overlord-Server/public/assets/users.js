@@ -77,11 +77,11 @@ async function getCurrentUser() {
         window.location.href = "/";
       }
     } else {
-      window.location.href = "/login.html";
+      window.location.href = "/";
     }
   } catch (err) {
     console.error("Failed to get current user:", err);
-    window.location.href = "/login.html";
+    window.location.href = "/";
   }
 }
 

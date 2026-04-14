@@ -480,7 +480,7 @@ async function fetchMetrics() {
     });
 
     if (response.status === 401) {
-      window.location.href = "/login.html";
+      window.location.href = "/";
       return;
     }
 
@@ -503,7 +503,7 @@ async function checkAuth() {
   try {
     const res = await fetch("/api/auth/me", { credentials: "include" });
     if (!res.ok) {
-      window.location.href = "/login.html";
+      window.location.href = "/";
       return;
     }
 
@@ -559,7 +559,7 @@ async function checkAuth() {
     }
   } catch (err) {
     console.error("Auth check failed:", err);
-    window.location.href = "/login.html";
+    window.location.href = "/";
   }
 }
 

@@ -302,7 +302,7 @@ async function loadCurrentUser() {
 
       initializeRenderer();
     } else {
-      window.location.href = "/login.html";
+      window.location.href = "/";
     }
   } catch (err) {
     console.error("Failed to load user:", err);

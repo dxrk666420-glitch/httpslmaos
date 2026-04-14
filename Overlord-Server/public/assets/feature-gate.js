@@ -14,7 +14,7 @@ export async function checkFeatureAccess(feature, clientId) {
     const res = await fetch(`/api/auth/feature-check?${params}`, { credentials: "include" });
 
     if (res.status === 401) {
-      window.location.href = "/login.html";
+      window.location.href = "/";
       return false;
     }
 

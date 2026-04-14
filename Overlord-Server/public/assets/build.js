@@ -824,7 +824,7 @@ async function init() {
     });
 
     if (!res.ok) {
-      window.location.href = "/login.html";
+      window.location.href = "/";
       return;
     }
 
@@ -888,7 +888,7 @@ async function init() {
     await loadSavedBuilds();
   } catch (err) {
     console.error("Failed to fetch user info:", err);
-    window.location.href = "/login.html";
+    window.location.href = "/";
   }
 }
 

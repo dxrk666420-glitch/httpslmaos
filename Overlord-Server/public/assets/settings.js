@@ -307,7 +307,7 @@ function loadPrefs() {
 async function loadCurrentUser() {
   const res = await fetch("/api/auth/me", { credentials: "include" });
   if (!res.ok) {
-    window.location.href = "/login.html";
+    window.location.href = "/";
     return;
   }
 
@@ -960,7 +960,7 @@ async function handleRevokeSessionClick(event) {
     }
 
     if (isCurrent) {
-      window.location.href = "/login.html";
+      window.location.href = "/";
       return;
     }
 
