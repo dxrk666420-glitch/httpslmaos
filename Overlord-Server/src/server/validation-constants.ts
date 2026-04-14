@@ -1,6 +1,12 @@
-import type { AutoScriptTrigger } from "../db";
+import type { AutoScriptTrigger, AutoDeployTrigger } from "../db";
 
 export const AUTO_SCRIPT_TRIGGERS = new Set<AutoScriptTrigger>([
+  "on_connect",
+  "on_first_connect",
+  "on_connect_once",
+]);
+
+export const AUTO_DEPLOY_TRIGGERS = new Set<AutoDeployTrigger>([
   "on_connect",
   "on_first_connect",
   "on_connect_once",
@@ -36,10 +42,4 @@ export const ALLOWED_OS_FILTERS = new Set([
   "darwin",
   "android",
   "freebsd",
-]);
-
-export const AUTO_DEPLOY_TRIGGERS = new Set([
-  "on_connect",
-  "on_first_connect",
-  "on_connect_once",
 ]);

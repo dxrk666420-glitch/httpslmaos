@@ -146,7 +146,7 @@ function renderClients() {
 async function loadCurrentUser() {
   const res = await fetch("/api/auth/me", { credentials: "include" });
   if (!res.ok) {
-    window.location.href = "/login.html";
+    window.location.href = "/";
     return;
   }
   state.me = await res.json();

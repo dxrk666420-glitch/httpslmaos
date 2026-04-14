@@ -8,6 +8,7 @@ import { logger } from "../../logger";
 import { encodeMessage } from "../../protocol";
 import { getConfig } from "../../config";
 import { isAuthorizedAgentRequest } from "../agent-auth";
+import { canUserAccessClient } from "../../users";
 
 type RequestIpProvider = {
   requestIP: (req: Request) => { address?: string } | null | undefined;
@@ -140,7 +141,9 @@ const FILE_UPLOAD_PULL_TTL_MS = parsePositiveIntEnv(
 
 function isSafeRemotePath(value: string): boolean {
   if (!value || value.length > 4096) return false;
-  return !/[\x00-\x1F\x7F]/.test(value);
+  if (/[\x00-\x1F\x7F]/.test(value)) return false;
+  if (/(\.\.([\/\\]|$))/.test(value)) return false;
+  return true;
 }
 
 async function serveDownloadById(
@@ -354,6 +357,10 @@ export async function handleFileDownloadRoutes(
     const fileName = typeof body?.fileName === "string" ? body.fileName.trim() : "upload.bin";
     if (!clientId || !uploadPath || !isSafeRemotePath(uploadPath)) {
       return new Response("Bad request", { status: 400 });
+    }
+
+    if (!canUserAccessClient(user.userId, user.role as any, clientId)) {
+      return new Response("Forbidden: client access denied", { status: 403 });
     }
 
     logger.debug("[filebrowser] http upload request", {
@@ -594,6 +601,10 @@ export async function handleFileDownloadRoutes(
     const downloadPath = typeof body?.path === "string" ? body.path.trim() : "";
     if (!clientId || !downloadPath || !isSafeRemotePath(downloadPath)) {
       return new Response("Bad request", { status: 400 });
+    }
+
+    if (!canUserAccessClient(user.userId, user.role as any, clientId)) {
+      return new Response("Forbidden: client access denied", { status: 403 });
     }
 
     const target = clientManager.getClient(clientId);

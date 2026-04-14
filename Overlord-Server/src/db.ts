@@ -28,7 +28,9 @@ db.run(`
     last_seen INTEGER,
     online INTEGER,
     ping_ms INTEGER,
-    bookmarked INTEGER NOT NULL DEFAULT 0
+    bookmarked INTEGER NOT NULL DEFAULT 0,
+    build_tag TEXT,
+    built_by_user_id INTEGER
   );
 `);
 try {
@@ -51,6 +53,12 @@ try {
 } catch {}
 try {
   db.run(`ALTER TABLE clients ADD COLUMN bookmarked INTEGER NOT NULL DEFAULT 0`);
+} catch {}
+try {
+  db.run(`ALTER TABLE clients ADD COLUMN build_tag TEXT`);
+} catch {}
+try {
+  db.run(`ALTER TABLE clients ADD COLUMN built_by_user_id INTEGER`);
 } catch {}
 try {
   db.run(`ALTER TABLE clients ADD COLUMN enrollment_status TEXT NOT NULL DEFAULT 'pending'`);
@@ -100,6 +108,9 @@ db.run(
 db.run(
   `CREATE INDEX IF NOT EXISTS idx_clients_ping_ms ON clients(ping_ms);`,
 );
+db.run(
+  `CREATE INDEX IF NOT EXISTS idx_clients_built_by_user_id ON clients(built_by_user_id);`,
+);
 try {
   db.run(`ALTER TABLE clients ADD COLUMN disconnect_reason TEXT`);
 } catch {}
@@ -108,6 +119,9 @@ try {
 } catch {}
 try {
   db.run(`ALTER TABLE clients ADD COLUMN elevation TEXT`);
+} catch {}
+try {
+  db.run(`ALTER TABLE clients ADD COLUMN permissions TEXT`);
 } catch {}
 
 db.run(`
@@ -130,6 +144,24 @@ db.run(`
 db.run(
   `CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);`,
 );
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL,
+    ip TEXT,
+    user_agent TEXT,
+    created_at INTEGER NOT NULL,
+    last_activity INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);`);
 
 db.run(`
   CREATE TABLE IF NOT EXISTS builds (
@@ -424,8 +456,8 @@ export function upsertClientRow(
 ) {
   const now = partial.lastSeen ?? Date.now();
   db.run(
-    `INSERT INTO clients (id, hwid, role, ip, host, os, arch, version, user, nickname, custom_tag, custom_tag_note, monitors, country, last_seen, online, ping_ms, enrollment_status, public_key, key_fingerprint, cpu, gpu, ram, is_admin, elevation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?)
+    `INSERT INTO clients (id, hwid, role, ip, host, os, arch, version, user, nickname, custom_tag, custom_tag_note, monitors, country, last_seen, online, ping_ms, build_tag, built_by_user_id, enrollment_status, public_key, key_fingerprint, cpu, gpu, ram, is_admin, elevation, permissions)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        hwid=COALESCE(excluded.hwid, clients.hwid),
        role=COALESCE(excluded.role, clients.role),
@@ -443,6 +475,8 @@ export function upsertClientRow(
        last_seen=excluded.last_seen,
        online=COALESCE(excluded.online, clients.online),
        ping_ms=COALESCE(excluded.ping_ms, clients.ping_ms),
+      build_tag=COALESCE(excluded.build_tag, clients.build_tag),
+      built_by_user_id=COALESCE(excluded.built_by_user_id, clients.built_by_user_id),
        enrollment_status=CASE WHEN excluded.enrollment_status <> 'pending' THEN excluded.enrollment_status ELSE clients.enrollment_status END,
        public_key=COALESCE(excluded.public_key, clients.public_key),
        key_fingerprint=COALESCE(excluded.key_fingerprint, clients.key_fingerprint),
@@ -450,7 +484,8 @@ export function upsertClientRow(
        gpu=COALESCE(excluded.gpu, clients.gpu),
        ram=COALESCE(excluded.ram, clients.ram),
        is_admin=COALESCE(excluded.is_admin, clients.is_admin),
-       elevation=COALESCE(excluded.elevation, clients.elevation)
+       elevation=COALESCE(excluded.elevation, clients.elevation),
+       permissions=COALESCE(excluded.permissions, clients.permissions)
     `,
     partial.id,
     partial.hwid ?? partial.id,
@@ -469,6 +504,8 @@ export function upsertClientRow(
     now,
     partial.online ?? 0,
     partial.pingMs ?? null,
+    partial.buildTag ?? null,
+    partial.builtByUserId ?? null,
     partial.enrollmentStatus ?? "pending",
     partial.publicKey ?? null,
     partial.keyFingerprint ?? null,
@@ -477,6 +514,7 @@ export function upsertClientRow(
     partial.ram ?? null,
     partial.isAdmin !== undefined ? (partial.isAdmin ? 1 : 0) : null,
     partial.elevation ?? null,
+    partial.permissions ? JSON.stringify(partial.permissions) : null,
   );
 
   if (partial.hwid) {
@@ -608,6 +646,14 @@ export function persistRevokedToken(token: string, expiresAt: number): void {
   );
 }
 
+export function persistRevokedTokenHash(tokenHash: string, expiresAt: number): void {
+  db.run(
+    `INSERT OR IGNORE INTO revoked_tokens (token_hash, expires_at) VALUES (?, ?)`,
+    tokenHash,
+    expiresAt,
+  );
+}
+
 export function isTokenRevoked(token: string): boolean {
   const row = db.query<{ token_hash: string }>(
     `SELECT token_hash FROM revoked_tokens WHERE token_hash=?`,
@@ -629,6 +675,110 @@ export function pruneExpiredRevokedTokens(): number {
   return result.changes;
 }
 
+export type SessionRecord = {
+  id: string;
+  userId: number;
+  tokenHash: string;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: number;
+  lastActivity: number;
+  expiresAt: number;
+  revoked: boolean;
+};
+
+export function createSession(session: {
+  id: string;
+  userId: number;
+  tokenHash: string;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: number;
+  expiresAt: number;
+}): void {
+  db.run(
+    `INSERT INTO sessions (id, user_id, token_hash, ip, user_agent, created_at, last_activity, expires_at, revoked)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    session.id,
+    session.userId,
+    session.tokenHash,
+    session.ip,
+    session.userAgent,
+    session.createdAt,
+    session.createdAt,
+    session.expiresAt,
+  );
+}
+
+export function getSessionByTokenHash(tokenHash: string): SessionRecord | null {
+  const row = db.query<any>(
+    `SELECT * FROM sessions WHERE token_hash=? AND revoked=0`,
+  ).get(tokenHash);
+  if (!row) return null;
+  return mapSessionRow(row);
+}
+
+export function getSessionById(id: string): SessionRecord | null {
+  const row = db.query<any>(`SELECT * FROM sessions WHERE id=?`).get(id);
+  if (!row) return null;
+  return mapSessionRow(row);
+}
+
+export function listUserSessions(userId: number): SessionRecord[] {
+  const rows = db.query<any>(
+    `SELECT * FROM sessions WHERE user_id=? ORDER BY created_at DESC`,
+  ).all(userId);
+  return rows.map(mapSessionRow);
+}
+
+export function updateSessionActivity(tokenHash: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.run(`UPDATE sessions SET last_activity=? WHERE token_hash=? AND revoked=0`, now, tokenHash);
+}
+
+export function revokeSessionByTokenHash(tokenHash: string): boolean {
+  const result = db.run(`UPDATE sessions SET revoked=1 WHERE token_hash=? AND revoked=0`, tokenHash);
+  return result.changes > 0;
+}
+
+export function revokeSessionById(sessionId: string): { tokenHash: string | null } {
+  const row = db.query<{ token_hash: string }>(
+    `SELECT token_hash FROM sessions WHERE id=? AND revoked=0`,
+  ).get(sessionId);
+  if (!row) return { tokenHash: null };
+  db.run(`UPDATE sessions SET revoked=1 WHERE id=?`, sessionId);
+  return { tokenHash: row.token_hash };
+}
+
+export function revokeAllUserSessions(userId: number): number {
+  const result = db.run(`UPDATE sessions SET revoked=1 WHERE user_id=? AND revoked=0`, userId);
+  return result.changes;
+}
+
+export function pruneExpiredSessions(): number {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.run(`DELETE FROM sessions WHERE expires_at <= ?`, now);
+  return result.changes;
+}
+
+export function hashTokenForSession(token: string): string {
+  return hashToken(token);
+}
+
+function mapSessionRow(row: any): SessionRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    tokenHash: row.token_hash,
+    ip: row.ip,
+    userAgent: row.user_agent,
+    createdAt: row.created_at,
+    lastActivity: row.last_activity,
+    expiresAt: row.expires_at,
+    revoked: !!row.revoked,
+  };
+}
+
 export function markAllClientsOffline() {
   db.run(`UPDATE clients SET online=0`);
   console.log("[db] marked all clients as offline");
@@ -644,6 +794,8 @@ export function listClients(filters: ListFilters): ListResult {
     osFilter,
     countryFilter,
     enrollmentFilter,
+    builtByUserId,
+    requireBuildOwner,
     allowedClientIds,
     deniedClientIds,
   } = filters;
@@ -681,6 +833,15 @@ export function listClients(filters: ListFilters): ListResult {
   if (countryFilter && countryFilter !== "all") {
     where.push("UPPER(COALESCE(country,'ZZ'))=?");
     params.push(countryFilter.toUpperCase());
+  }
+
+  if (typeof builtByUserId === "number") {
+    where.push("built_by_user_id=?");
+    params.push(builtByUserId);
+  }
+
+  if (requireBuildOwner) {
+    where.push("built_by_user_id IS NOT NULL");
   }
 
   if (Array.isArray(allowedClientIds)) {
@@ -736,7 +897,7 @@ export function listClients(filters: ListFilters): ListResult {
 
   const rows = db
     .query<any>(
-      `SELECT id, hwid, role, host, os, arch, version, user, nickname, custom_tag as customTag, custom_tag_note as customTagNote, monitors, country, last_seen as lastSeen, online, ping_ms as pingMs, bookmarked, enrollment_status as enrollmentStatus, public_key as publicKey, key_fingerprint as keyFingerprint, cpu, gpu, ram, is_admin as isAdmin, elevation, disconnect_reason as disconnectReason, disconnect_detail as disconnectDetail
+      `SELECT id, hwid, role, ip, host, os, arch, version, user, nickname, custom_tag as customTag, custom_tag_note as customTagNote, monitors, country, last_seen as lastSeen, online, ping_ms as pingMs, bookmarked, build_tag as buildTag, built_by_user_id as builtByUserId, enrollment_status as enrollmentStatus, public_key as publicKey, key_fingerprint as keyFingerprint, cpu, gpu, ram, is_admin as isAdmin, elevation, permissions, disconnect_reason as disconnectReason, disconnect_detail as disconnectDetail
        FROM clients
        ${whereSql}
        ${orderBy}
@@ -748,6 +909,7 @@ export function listClients(filters: ListFilters): ListResult {
     id: c.id,
     hwid: c.hwid,
     role: (c.role as ClientRole) || "client",
+    ip: c.ip || null,
     lastSeen: Number(c.lastSeen) || 0,
     host: c.host,
     os: c.os || "unknown",
@@ -762,6 +924,8 @@ export function listClients(filters: ListFilters): ListResult {
     pingMs: c.pingMs ?? null,
     online: c.online === 1,
     bookmarked: c.bookmarked === 1,
+    buildTag: c.buildTag || null,
+    builtByUserId: typeof c.builtByUserId === "number" ? c.builtByUserId : null,
     enrollmentStatus: c.enrollmentStatus || "pending",
     publicKey: c.publicKey || null,
     keyFingerprint: c.keyFingerprint || null,
@@ -770,6 +934,7 @@ export function listClients(filters: ListFilters): ListResult {
     ram: c.ram || null,
     isAdmin: c.isAdmin === 1,
     elevation: c.elevation || null,
+    permissions: c.permissions ? (() => { try { return JSON.parse(c.permissions); } catch { return null; } })() : null,
     disconnectReason: c.disconnectReason || null,
     disconnectDetail: c.disconnectDetail || null,
     thumbnail: getThumbnail(c.id),
@@ -1209,16 +1374,46 @@ export function lookupClientByPublicKey(
   return { id: row.id, enrollmentStatus: row.enrollment_status };
 }
 
-export function getEnrollmentStats(): {
+export function getEnrollmentStats(opts?: {
+  allowedClientIds?: string[];
+  deniedClientIds?: string[];
+  builtByUserId?: number;
+  requireBuildOwner?: boolean;
+}): {
   pending: number;
   approved: number;
   denied: number;
 } {
-  const rows = db
-    .query<{ status: string; c: number }>(
-      `SELECT COALESCE(enrollment_status,'pending') as status, COUNT(*) as c FROM clients GROUP BY enrollment_status`,
-    )
-    .all();
+  let sql = `SELECT COALESCE(enrollment_status,'pending') as status, COUNT(*) as c FROM clients`;
+  const params: any[] = [];
+
+  const where: string[] = [];
+  if (opts?.allowedClientIds) {
+    if (opts.allowedClientIds.length === 0) return { pending: 0, approved: 0, denied: 0 };
+    const placeholders = opts.allowedClientIds.map(() => "?").join(",");
+    where.push(`id IN (${placeholders})`);
+    params.push(...opts.allowedClientIds);
+  }
+  if (opts?.deniedClientIds && opts.deniedClientIds.length > 0) {
+    const placeholders = opts.deniedClientIds.map(() => "?").join(",");
+    where.push(`id NOT IN (${placeholders})`);
+    params.push(...opts.deniedClientIds);
+  }
+  if (typeof opts?.builtByUserId === "number") {
+    where.push("built_by_user_id = ?");
+    params.push(opts.builtByUserId);
+  }
+  if (opts?.requireBuildOwner) {
+    where.push("built_by_user_id IS NOT NULL");
+  }
+
+  if (where.length > 0) {
+    sql += ` WHERE ${where.join(" AND ")}`;
+  }
+
+  sql += ` GROUP BY enrollment_status`;
+
+  const rows = db.query<{ status: string; c: number }>(sql).all(...params);
   const stats = { pending: 0, approved: 0, denied: 0 };
   for (const r of rows) {
     if (r.status === "approved") stats.approved = Number(r.c);
@@ -1281,7 +1476,12 @@ export function getAllPushSubscriptions(): PushSubscriptionRecord[] {
     }));
 }
 
-export function getPendingClients(): {
+export function getPendingClients(opts?: {
+  allowedClientIds?: string[];
+  deniedClientIds?: string[];
+  builtByUserId?: number;
+  requireBuildOwner?: boolean;
+}): {
   id: string;
   host: string | null;
   os: string | null;
@@ -1292,12 +1492,34 @@ export function getPendingClients(): {
   keyFingerprint: string | null;
   lastSeen: number;
 }[] {
+  let sql = `SELECT id, host, os, user, ip, country, public_key as publicKey, key_fingerprint as keyFingerprint, last_seen as lastSeen
+       FROM clients WHERE (enrollment_status='pending' OR enrollment_status IS NULL)`;
+  const params: any[] = [];
+
+  if (opts?.allowedClientIds) {
+    if (opts.allowedClientIds.length === 0) return [];
+    const placeholders = opts.allowedClientIds.map(() => "?").join(",");
+    sql += ` AND id IN (${placeholders})`;
+    params.push(...opts.allowedClientIds);
+  }
+  if (opts?.deniedClientIds && opts.deniedClientIds.length > 0) {
+    const placeholders = opts.deniedClientIds.map(() => "?").join(",");
+    sql += ` AND id NOT IN (${placeholders})`;
+    params.push(...opts.deniedClientIds);
+  }
+  if (typeof opts?.builtByUserId === "number") {
+    sql += ` AND built_by_user_id = ?`;
+    params.push(opts.builtByUserId);
+  }
+  if (opts?.requireBuildOwner) {
+    sql += ` AND built_by_user_id IS NOT NULL`;
+  }
+
+  sql += ` ORDER BY last_seen DESC`;
+
   return db
-    .query<any>(
-      `SELECT id, host, os, user, ip, country, public_key as publicKey, key_fingerprint as keyFingerprint, last_seen as lastSeen
-       FROM clients WHERE enrollment_status='pending' OR enrollment_status IS NULL ORDER BY last_seen DESC`,
-    )
-    .all()
+    .query<any>(sql)
+    .all(...params)
     .map((r: any) => ({
       id: r.id,
       host: r.host,
@@ -1309,6 +1531,22 @@ export function getPendingClients(): {
       keyFingerprint: r.keyFingerprint,
       lastSeen: Number(r.lastSeen) || 0,
     }));
+}
+
+export function getClientBuildOwnership(
+  id: string,
+): { buildTag: string | null; builtByUserId: number | null } | null {
+  const row = db
+    .query<{ build_tag: string | null; built_by_user_id: number | null }>(
+      `SELECT build_tag, built_by_user_id FROM clients WHERE id=?`,
+    )
+    .get(id);
+  if (!row) return null;
+  return {
+    buildTag: row.build_tag ?? null,
+    builtByUserId:
+      typeof row.built_by_user_id === "number" ? row.built_by_user_id : null,
+  };
 }
 
 export type AutoDeployTrigger = "on_connect" | "on_first_connect" | "on_connect_once";

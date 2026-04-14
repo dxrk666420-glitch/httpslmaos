@@ -23,6 +23,7 @@ export interface User {
   must_change_password: number;
   client_scope: ClientAccessScope;
   can_build: number;
+  can_upload_files: number;
   telegram_chat_id: string | null;
 }
 
@@ -35,6 +36,7 @@ export interface UserInfo {
   created_by: string | null;
   client_scope: ClientAccessScope;
   can_build: number;
+  can_upload_files: number;
   telegram_chat_id: string | null;
 }
 
@@ -81,6 +83,16 @@ db.exec(`
 db.exec(
   `CREATE INDEX IF NOT EXISTS idx_user_client_access_rules_user ON user_client_access_rules(user_id)`,
 );
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_feature_permissions (
+    user_id INTEGER NOT NULL,
+    feature TEXT NOT NULL,
+    allowed INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (user_id, feature),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`);
 
 try {
   db.exec(
@@ -157,6 +169,39 @@ for (const col of notificationColumns) {
   }
 }
 
+try {
+  db.exec(
+    `ALTER TABLE users ADD COLUMN can_upload_files INTEGER NOT NULL DEFAULT 0`,
+  );
+  logger.info("[users] Added can_upload_files column to existing database");
+
+  try {
+    db.exec(`UPDATE users SET can_upload_files=1 WHERE role='admin'`);
+  } catch (err: any) {
+    logger.error("[users] Failed to backfill admin can_upload_files:", err);
+  }
+} catch (err: any) {
+  if (!err.message?.includes("duplicate column name")) {
+    logger.error("[users] Migration error:", err);
+  }
+}
+
+const clientEventColumns: Array<{ sql: string; label: string }> = [
+  { sql: `ALTER TABLE users ADD COLUMN client_event_webhook INTEGER DEFAULT 1`, label: "client_event_webhook" },
+  { sql: `ALTER TABLE users ADD COLUMN client_event_telegram INTEGER DEFAULT 1`, label: "client_event_telegram" },
+  { sql: `ALTER TABLE users ADD COLUMN client_event_push INTEGER DEFAULT 1`, label: "client_event_push" },
+];
+for (const col of clientEventColumns) {
+  try {
+    db.exec(col.sql);
+    logger.info(`[users] Added ${col.label} column to existing database`);
+  } catch (err: any) {
+    if (!err.message?.includes("duplicate column name")) {
+      logger.error("[users] Migration error:", err);
+    }
+  }
+}
+
 const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as {
   count: number;
 };
@@ -172,8 +217,8 @@ if (userCount.count === 0) {
   });
 
   db.prepare(
-    "INSERT INTO users (username, password_hash, role, created_at, created_by, must_change_password, client_scope, can_build) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(initialUsername, defaultPassword, "admin", Date.now(), "system", 1, "all", 1);
+    "INSERT INTO users (username, password_hash, role, created_at, created_by, must_change_password, client_scope, can_build, can_upload_files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(initialUsername, defaultPassword, "admin", Date.now(), "system", 1, "all", 1, 1);
 
   const createdUser = db
     .prepare("SELECT * FROM users WHERE username = ?")
@@ -209,7 +254,7 @@ export function getUserByUsername(username: string): User | null {
 export function listUsers(): UserInfo[] {
   const users = db
     .prepare(
-      "SELECT id, username, role, created_at, last_login, created_by, client_scope, can_build, telegram_chat_id FROM users ORDER BY created_at DESC",
+      "SELECT id, username, role, created_at, last_login, created_by, client_scope, can_build, can_upload_files, telegram_chat_id FROM users ORDER BY created_at DESC",
     )
     .all() as UserInfo[];
   return users;
@@ -232,7 +277,7 @@ export function listUserClientRuleIdsByAccess(
   access: ClientAccessRuleKind,
 ): string[] {
   const entry = getUserAccessCacheEntry(userId);
-  const values = access === "allowlist" ? [] : access === "allow" ? entry.allow : entry.deny;
+  const values = access === "allow" ? entry.allow : entry.deny;
   return Array.from(values).sort((left, right) => left.localeCompare(right));
 }
 
@@ -362,6 +407,136 @@ export function canUserAccessClient(
   return false;
 }
 
+export type FeatureName =
+  | "console"
+  | "remote_desktop"
+  | "hvnc"
+  | "webcam"
+  | "file_browser"
+  | "processes"
+  | "keylogger"
+  | "voice";
+
+export const ALL_FEATURES: FeatureName[] = [
+  "console",
+  "remote_desktop",
+  "hvnc",
+  "webcam",
+  "file_browser",
+  "processes",
+  "keylogger",
+  "voice",
+];
+
+const featurePermCache = new Map<number, Map<string, boolean>>();
+
+function getFeaturePermCacheEntry(userId: number): Map<string, boolean> {
+  const cached = featurePermCache.get(userId);
+  if (cached) return cached;
+
+  const rows = db
+    .prepare("SELECT feature, allowed FROM user_feature_permissions WHERE user_id = ?")
+    .all(userId) as Array<{ feature: string; allowed: number }>;
+
+  const map = new Map<string, boolean>();
+  for (const row of rows) {
+    map.set(row.feature, row.allowed === 1);
+  }
+  featurePermCache.set(userId, map);
+  return map;
+}
+
+function invalidateFeaturePermCache(userId: number): void {
+  featurePermCache.delete(userId);
+}
+
+export function canUserAccessFeature(
+  userId: number,
+  role: UserRole,
+  feature: FeatureName,
+): boolean {
+  if (role === "admin") return true;
+  if (role === "viewer") return false;
+
+  const perms = getFeaturePermCacheEntry(userId);
+  const entry = perms.get(feature);
+  if (entry === undefined) return true;
+  return entry;
+}
+
+export function getUserFeaturePermissions(
+  userId: number,
+): Record<FeatureName, boolean> {
+  const user = getUserById(userId);
+  if (!user) {
+    const result = {} as Record<FeatureName, boolean>;
+    for (const f of ALL_FEATURES) result[f] = false;
+    return result;
+  }
+
+  const result = {} as Record<FeatureName, boolean>;
+  for (const f of ALL_FEATURES) {
+    result[f] = canUserAccessFeature(userId, user.role, f);
+  }
+  return result;
+}
+
+export function setUserFeaturePermission(
+  userId: number,
+  feature: FeatureName,
+  allowed: boolean,
+): { success: boolean; error?: string } {
+  if (!ALL_FEATURES.includes(feature)) {
+    return { success: false, error: `Invalid feature: ${feature}` };
+  }
+  try {
+    db.prepare(
+      "INSERT OR REPLACE INTO user_feature_permissions (user_id, feature, allowed) VALUES (?, ?, ?)",
+    ).run(userId, feature, allowed ? 1 : 0);
+    invalidateFeaturePermCache(userId);
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] setUserFeaturePermission error:", err);
+    return { success: false, error: err.message || "Failed to update feature permission" };
+  }
+}
+
+export function setUserFeaturePermissions(
+  userId: number,
+  permissions: Partial<Record<FeatureName, boolean>>,
+): { success: boolean; error?: string } {
+  const stmt = db.prepare(
+    "INSERT OR REPLACE INTO user_feature_permissions (user_id, feature, allowed) VALUES (?, ?, ?)",
+  );
+  try {
+    const tx = db.transaction(() => {
+      for (const [feature, allowed] of Object.entries(permissions)) {
+        if (!ALL_FEATURES.includes(feature as FeatureName)) continue;
+        stmt.run(userId, feature, allowed ? 1 : 0);
+      }
+    });
+    tx();
+    invalidateFeaturePermCache(userId);
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] setUserFeaturePermissions error:", err);
+    return { success: false, error: err.message || "Failed to update feature permissions" };
+  }
+}
+
+export function resetUserFeaturePermissions(
+  userId: number,
+): { success: boolean; error?: string } {
+  try {
+    db.prepare("DELETE FROM user_feature_permissions WHERE user_id = ?").run(userId);
+    invalidateFeaturePermCache(userId);
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] resetUserFeaturePermissions error:", err);
+    return { success: false, error: err.message || "Failed to reset feature permissions" };
+  }
+}
+
 function validatePasswordPolicy(password: string): string | null {
   const security = getConfig().security;
   const minLength = Math.min(128, Math.max(6, Number(security.passwordMinLength) || 6));
@@ -425,9 +600,9 @@ export async function createUser(
 
     const result = db
       .prepare(
-        "INSERT INTO users (username, password_hash, role, created_at, created_by, client_scope, can_build) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO users (username, password_hash, role, created_at, created_by, client_scope, can_build, can_upload_files) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(username, passwordHash, role, Date.now(), createdBy, role === "admin" ? "all" : "none", role === "admin" || role === "operator" ? 1 : 0);
+      .run(username, passwordHash, role, Date.now(), createdBy, role === "admin" ? "all" : "none", role === "admin" || role === "operator" ? 1 : 0, role === "admin" ? 1 : 0);
 
     invalidateNotificationDeliveryCache();
 
@@ -550,7 +725,11 @@ export function canBuildClients(userId: number, role: UserRole): boolean {
 }
 
 export function canViewAuditLogs(role: UserRole): boolean {
-  return role === "admin";
+  return role === "admin" || role === "operator";
+}
+
+export function canManageEnrollment(role: UserRole): boolean {
+  return role === "admin" || role === "operator";
 }
 
 export function hasPermission(role: UserRole, permission: string, userId?: number): boolean {
@@ -564,6 +743,8 @@ export function hasPermission(role: UserRole, permission: string, userId?: numbe
     case "clients:build":
       if (userId !== undefined) return canBuildClients(userId, role);
       return role === "admin" || role === "operator";
+    case "clients:enroll":
+      return canManageEnrollment(role);
     case "audit:view":
       return canViewAuditLogs(role);
     default:
@@ -581,6 +762,25 @@ export function setUserCanBuild(
   } catch (err: any) {
     logger.error("[users] setUserCanBuild error:", err);
     return { success: false, error: err.message || "Failed to update build permission" };
+  }
+}
+
+export function canUploadFiles(userId: number, role: UserRole): boolean {
+  if (role === "admin") return true;
+  const user = getUserById(userId);
+  return user ? user.can_upload_files === 1 : false;
+}
+
+export function setUserCanUploadFiles(
+  userId: number,
+  canUpload: boolean,
+): { success: boolean; error?: string } {
+  try {
+    db.prepare("UPDATE users SET can_upload_files = ? WHERE id = ?").run(canUpload ? 1 : 0, userId);
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] setUserCanUploadFiles error:", err);
+    return { success: false, error: err.message || "Failed to update upload permission" };
   }
 }
 
@@ -623,12 +823,15 @@ export interface UserNotificationSettings {
   telegram_bot_token: string | null;
   telegram_chat_id: string | null;
   telegram_template: string | null;
+  client_event_webhook: number;
+  client_event_telegram: number;
+  client_event_push: number;
 }
 
 export function getUserNotificationSettings(userId: number): UserNotificationSettings | null {
   const row = db
     .prepare(
-      "SELECT webhook_enabled, webhook_url, webhook_template, telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_template FROM users WHERE id = ?",
+      "SELECT webhook_enabled, webhook_url, webhook_template, telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_template, client_event_webhook, client_event_telegram, client_event_push FROM users WHERE id = ?",
     )
     .get(userId) as UserNotificationSettings | undefined;
   return row ?? null;
@@ -669,6 +872,18 @@ export function updateUserNotificationSettings(
     fields.push("telegram_template = ?");
     values.push(settings.telegram_template || null);
   }
+  if ("client_event_webhook" in settings) {
+    fields.push("client_event_webhook = ?");
+    values.push(settings.client_event_webhook ? 1 : 0);
+  }
+  if ("client_event_telegram" in settings) {
+    fields.push("client_event_telegram = ?");
+    values.push(settings.client_event_telegram ? 1 : 0);
+  }
+  if ("client_event_push" in settings) {
+    fields.push("client_event_push = ?");
+    values.push(settings.client_event_push ? 1 : 0);
+  }
 
   if (fields.length === 0) return { success: true };
 
@@ -695,6 +910,9 @@ export interface UserDeliveryRow {
   telegram_bot_token: string | null;
   telegram_chat_id: string | null;
   telegram_template: string | null;
+  client_event_webhook: number;
+  client_event_telegram: number;
+  client_event_push: number;
 }
 
 export function getUsersForNotificationDelivery(): UserDeliveryRow[] {
@@ -706,7 +924,8 @@ export function getUsersForNotificationDelivery(): UserDeliveryRow[] {
     .prepare(
       `SELECT id, username, role, client_scope,
               webhook_enabled, webhook_url, webhook_template,
-              telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_template
+              telegram_enabled, telegram_bot_token, telegram_chat_id, telegram_template,
+              client_event_webhook, client_event_telegram, client_event_push
        FROM users
        WHERE (webhook_enabled = 1 AND webhook_url IS NOT NULL AND webhook_url != '')
           OR (telegram_enabled = 1 AND telegram_bot_token IS NOT NULL AND telegram_bot_token != ''
@@ -721,8 +940,4 @@ export function getUsersForNotificationDeliveryByClient(clientId: string): UserD
   return getUsersForNotificationDelivery().filter((user) =>
     canUserAccessClient(user.id, user.role, clientId),
   );
-}
-
-export function canUploadFiles(_userId: number, role: UserRole): boolean {
-  return role === "admin" || role === "operator";
 }

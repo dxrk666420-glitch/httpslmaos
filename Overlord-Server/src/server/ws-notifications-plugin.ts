@@ -7,7 +7,7 @@ import { metrics } from "../metrics";
 import { encodeMessage } from "../protocol";
 import * as sessionManager from "../sessions/sessionManager";
 import type { SocketData } from "../sessions/types";
-import { deliverWebPushClientEvent } from "./notification-delivery";
+import { deliverWebPushClientEvent, deliverClientEventToExternalChannels, type UserDeliveryTarget } from "./notification-delivery";
 
 type NotificationRecord = {
   id: string;
@@ -65,6 +65,10 @@ type CreateDeps = {
     height?: number,
   ) => void;
   deliverNotificationWithScreenshot: (record: NotificationRecord) => Promise<void>;
+  getDeliveryTargetsForClientEvent: (
+    event: string,
+    clientId: string,
+  ) => UserDeliveryTarget[];
   savePluginState: () => Promise<void>;
 };
 
@@ -353,10 +357,23 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
         safeSendViewer(session.viewer, item);
       }
 
-      void deliverWebPushClientEvent(event, info, deps.canUserAccessClient, deps.getUserRole);
+      const externalTargets = deps.getDeliveryTargetsForClientEvent(event, info.id);
+      const pushEnabledByUser = new Map(externalTargets.map((t) => [t.userId, t.clientEventPush]));
+
+      void deliverWebPushClientEvent(event, info, deps.canUserAccessClient, deps.getUserRole, (userId) => {
+        const enabled = pushEnabledByUser.get(userId);
+        return enabled !== undefined ? enabled : true;
+      });
+
+      void deliverClientEventToExternalChannels(event, info, externalTargets);
     },
 
     markPluginLoaded,
+
+    clearClientPluginState(clientId: string) {
+      deps.pluginLoadedByClient.delete(clientId);
+      deps.pluginLoadingByClient.delete(clientId);
+    },
 
     isPluginLoaded(clientId: string, pluginId: string): boolean {
       return deps.pluginLoadedByClient.get(clientId)?.has(pluginId) ?? false;

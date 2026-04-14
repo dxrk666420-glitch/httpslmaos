@@ -1,6 +1,6 @@
 services:
   overlord-server:
-    image: ${DOCKER_IMAGE:-overlord-server:latest}
+    image: ${DOCKER_IMAGE:-ghcr.io/vxaboveground/overlord:latest}
     build:
       context: .
       dockerfile: Dockerfile

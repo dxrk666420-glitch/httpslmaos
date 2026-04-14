@@ -23,8 +23,11 @@ type HttpDispatchDeps<
   TNotificationsConfig,
   TBuild,
   TDeploy,
+  TAutoDeploy,
+  TWinRE,
   TFileDownload,
   TPlugin,
+  TFileShare,
   TMisc,
   TAssets,
   TPage,
@@ -36,12 +39,16 @@ type HttpDispatchDeps<
   handleAuthRoutes: RouteHandlerWithServer<TServer>;
   handleNotificationsConfigRoutes: RouteHandlerWithServerDeps<TServer, TNotificationsConfig>;
   handleAutoScriptsRoutes: RouteHandler;
+  handleAutoDeployRoutes: RouteHandlerWithDeps<TAutoDeploy>;
   handleEnrollmentRoutes: RouteHandler;
+  handleSolRoutes: RouteHandler;
   handleUsersRoutes: RouteHandlerWithServer<TServer>;
   handleBuildRoutes: RouteHandlerWithServerDeps<TServer, TBuild>;
   handleDeployRoutes: RouteHandlerWithServerDeps<TServer, TDeploy>;
+  handleWinRERoutes: RouteHandlerWithServerDeps<TServer, TWinRE>;
   handleFileDownloadRoutes: RouteHandlerWithServerDeps<TServer, TFileDownload>;
   handlePluginRoutes: RouteHandlerWithDeps<TPlugin>;
+  handleFileShareRoutes: RouteHandlerWithDeps<TFileShare>;
   handleMiscRoutes: RouteHandlerWithDeps<TMisc>;
   handleAssetsRoutes: RouteHandlerWithDeps<TAssets>;
   handlePageRoutes: RouteHandlerWithDeps<TPage>;
@@ -51,8 +58,11 @@ type HttpDispatchDeps<
     notificationsConfig: TNotificationsConfig;
     build: TBuild;
     deploy: TDeploy;
+    autoDeploy: TAutoDeploy;
+    winre: TWinRE;
     fileDownload: TFileDownload;
     plugin: TPlugin;
+    fileShare: TFileShare;
     misc: TMisc;
     assets: TAssets;
     page: TPage;
@@ -66,8 +76,11 @@ export function createHttpFetchHandler<
   TNotificationsConfig,
   TBuild,
   TDeploy,
+  TAutoDeploy,
+  TWinRE,
   TFileDownload,
   TPlugin,
+  TFileShare,
   TMisc,
   TAssets,
   TPage,
@@ -79,8 +92,11 @@ export function createHttpFetchHandler<
     TNotificationsConfig,
     TBuild,
     TDeploy,
+    TAutoDeploy,
+    TWinRE,
     TFileDownload,
     TPlugin,
+    TFileShare,
     TMisc,
     TAssets,
     TPage,
@@ -106,8 +122,14 @@ export function createHttpFetchHandler<
       const autoScriptsResponse = await deps.handleAutoScriptsRoutes(req, url);
       if (autoScriptsResponse) return autoScriptsResponse;
 
+      const autoDeployResponse = await deps.handleAutoDeployRoutes(req, url, deps.routeDeps.autoDeploy);
+      if (autoDeployResponse) return autoDeployResponse;
+
       const enrollmentResponse = await deps.handleEnrollmentRoutes(req, url);
       if (enrollmentResponse) return enrollmentResponse;
+
+      const solResponse = await deps.handleSolRoutes(req, url);
+      if (solResponse) return solResponse;
 
       const usersResponse = await deps.handleUsersRoutes(req, url, routeServer);
       if (usersResponse) return usersResponse;
@@ -118,11 +140,17 @@ export function createHttpFetchHandler<
       const deployResponse = await deps.handleDeployRoutes(req, url, routeServer, deps.routeDeps.deploy);
       if (deployResponse) return deployResponse;
 
+      const winreResponse = await deps.handleWinRERoutes(req, url, routeServer, deps.routeDeps.winre);
+      if (winreResponse) return winreResponse;
+
       const fileDownloadResponse = await deps.handleFileDownloadRoutes(req, url, routeServer, deps.routeDeps.fileDownload);
       if (fileDownloadResponse) return fileDownloadResponse;
 
       const pluginResponse = await deps.handlePluginRoutes(req, url, deps.routeDeps.plugin);
       if (pluginResponse) return pluginResponse;
+
+      const fileShareResponse = await deps.handleFileShareRoutes(req, url, deps.routeDeps.fileShare);
+      if (fileShareResponse) return fileShareResponse;
 
       const miscResponse = await deps.handleMiscRoutes(req, url, deps.routeDeps.misc);
       if (miscResponse) return miscResponse;

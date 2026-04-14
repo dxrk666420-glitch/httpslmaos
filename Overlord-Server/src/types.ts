@@ -23,16 +23,21 @@ export type ClientInfo = {
   monitors?: number;
   monitorInfo?: { width: number; height: number }[];
   country?: string;
+  pingMs?: number;
   inMemory?: boolean;
-  isAdmin?: boolean;
-  elevation?: string;
   cpu?: string;
   gpu?: string;
   ram?: string;
-  pingMs?: number;
+  isAdmin?: boolean;
+  elevation?: string;
+  permissions?: Record<string, boolean>;
   enrollmentStatus?: EnrollmentStatus;
+  buildTag?: string;
+  builtByUserId?: number;
   publicKey?: string;
   keyFingerprint?: string;
+  disconnectReason?: string;
+  disconnectDetail?: string;
 };
 
 export type ListFilters = {
@@ -44,6 +49,8 @@ export type ListFilters = {
   osFilter?: string;
   countryFilter?: string;
   enrollmentFilter?: string;
+  builtByUserId?: number;
+  requireBuildOwner?: boolean;
   allowedClientIds?: string[];
   deniedClientIds?: string[];
 };

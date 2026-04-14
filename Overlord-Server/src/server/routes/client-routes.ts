@@ -77,8 +77,25 @@ export async function handleClientRoutes(
     const osFilter = url.searchParams.get("os") || "all";
     const countryFilter = url.searchParams.get("country") || "all";
     const enrollmentFilter = url.searchParams.get("enrollmentFilter") || "approved";
+    const isEnrollmentRequest = url.searchParams.has("enrollmentFilter");
     if (user.role === "admin") {
       const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, countryFilter, enrollmentFilter });
+      return Response.json(result, { headers: deps.CORS_HEADERS });
+    }
+
+    if (user.role === "operator" && isEnrollmentRequest) {
+      const result = listClients({
+        page,
+        pageSize,
+        search,
+        sort,
+        statusFilter,
+        osFilter,
+        countryFilter,
+        enrollmentFilter,
+        builtByUserId: user.userId,
+        requireBuildOwner: true,
+      });
       return Response.json(result, { headers: deps.CORS_HEADERS });
     }
 
@@ -666,6 +683,50 @@ export async function handleClientRoutes(
             details: "Agent uninstall requested - persistence will be removed",
             success: true,
           });
+        } else if (action === "elevate") {
+          if (user.role !== "admin") {
+            return new Response("Forbidden: Admin access required", { status: 403 });
+          }
+
+          const password = typeof body?.password === "string" ? body.password : "";
+          if (!password) {
+            return new Response("Bad request: password required", { status: 400 });
+          }
+
+          const cmdId = uuidv4();
+          const replyPromise: Promise<{ ok: boolean; message?: string }> = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              deps.pendingCommandReplies.delete(cmdId);
+              reject(new Error("Elevation timed out"));
+            }, 30_000);
+            deps.pendingCommandReplies.set(cmdId, { resolve, reject, timeout, clientId: targetId });
+          });
+
+          target.ws.send(
+            encodeMessage({
+              type: "command",
+              commandType: "elevate",
+              id: cmdId,
+              payload: { password },
+            }),
+          );
+          metrics.recordCommand("elevate");
+          logAudit({
+            timestamp: Date.now(),
+            username: user.username,
+            ip,
+            action: AuditAction.COMMAND,
+            targetClientId: targetId,
+            success: true,
+            details: "elevate (sudo)",
+          });
+
+          try {
+            const result = await replyPromise;
+            return Response.json({ ok: result.ok, message: result.message || "" }, { headers: deps.CORS_HEADERS });
+          } catch (error: any) {
+            return Response.json({ ok: false, error: error.message || "Elevation failed" }, { status: 504 });
+          }
         } else {
           success = false;
           return new Response("Bad request", { status: 400 });

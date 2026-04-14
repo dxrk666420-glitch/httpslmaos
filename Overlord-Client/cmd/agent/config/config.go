@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var AgentVersion = "1.7.6"
+var AgentVersion = "1.8.1"
 
 var DefaultPersistence = "false"
 var DefaultServerURL = "wss://127.0.0.1:5173"
@@ -349,14 +349,21 @@ func firstNonEmpty(values ...string) string {
 }
 
 func deriveHWID() string {
+	machineID := platformMachineID()
+	if machineID != "" {
+		h := sha256.New()
+		h.Write([]byte(machineID))
+		h.Write([]byte("|"))
+		h.Write([]byte(runtime.GOOS))
+		return hex.EncodeToString(h.Sum(nil))
+	}
+	// fallback
 	h := sha256.New()
 	h.Write([]byte(hostname()))
 	h.Write([]byte("|"))
 	h.Write([]byte(os.Getenv("USERNAME")))
 	h.Write([]byte("|"))
 	h.Write([]byte(runtime.GOOS))
-	h.Write([]byte("|"))
-	h.Write([]byte(runtime.GOARCH))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

