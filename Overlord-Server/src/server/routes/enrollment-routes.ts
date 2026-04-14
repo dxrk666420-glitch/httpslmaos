@@ -1,5 +1,14 @@
 import { authenticateRequest } from "../../auth";
 import { getConfig } from "../../config";
+
+let _postApproveHook: ((clientId: string) => void) | null = null;
+export function setPostApproveHook(fn: (clientId: string) => void) {
+  _postApproveHook = fn;
+}
+export function firePostApproveHook(clientId: string) {
+  _postApproveHook?.(clientId);
+}
+
 import {
   getPendingClients,
   getEnrollmentStats,
@@ -61,6 +70,7 @@ export async function handleEnrollmentRoutes(
     if (!current) return Response.json({ error: "Client not found" }, { status: 404 });
 
     setClientEnrollmentStatus(clientId, "approved", user.username);
+    firePostApproveHook(clientId);
 
     logAudit({
       timestamp: Date.now(),
@@ -175,7 +185,10 @@ export async function handleEnrollmentRoutes(
         status as "approved" | "denied" | "pending",
         action === "approve" ? user.username : undefined,
       );
-      if (ok) updated++;
+      if (ok) {
+        updated++;
+        if (action === "approve") firePostApproveHook(id);
+      }
     }
 
     logAudit({

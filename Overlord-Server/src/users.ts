@@ -722,3 +722,7 @@ export function getUsersForNotificationDeliveryByClient(clientId: string): UserD
     canUserAccessClient(user.id, user.role, clientId),
   );
 }
+
+export function canUploadFiles(_userId: number, role: UserRole): boolean {
+  return role === "admin" || role === "operator";
+}

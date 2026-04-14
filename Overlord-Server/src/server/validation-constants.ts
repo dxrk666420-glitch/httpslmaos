@@ -37,3 +37,9 @@ export const ALLOWED_OS_FILTERS = new Set([
   "android",
   "freebsd",
 ]);
+
+export const AUTO_DEPLOY_TRIGGERS = new Set([
+  "on_connect",
+  "on_first_connect",
+  "on_connect_once",
+]);

