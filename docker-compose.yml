@@ -92,6 +92,20 @@ services:
     depends_on:
       - overlord-server
 
+  browser-builder:
+    build:
+      context: ./Browser-Builder
+      dockerfile: Dockerfile
+    container_name: browser-builder
+    network_mode: host
+    environment:
+      BROWSER_BUILDER_PORT: ${BROWSER_BUILDER_PORT:-5176}
+      HOST: ${HOST:-0.0.0.0}
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   overlord-data:
   overlord-certs:
