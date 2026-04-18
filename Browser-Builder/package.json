@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "js-confuser": "^2.0.1",
+    "jszip": "^3.10.1",
     "pkg": "^5.8.1"
   }
 }

